@@ -1,4 +1,3 @@
-transformers==4.2.1
 scipy
 datasets
 pandas

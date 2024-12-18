@@ -30,7 +30,7 @@ def main():
     parser.add_argument("--model_name_or_path", type=str, 
             help="Transformers' model name or path")
     parser.add_argument("--pooler", type=str, 
-            choices=['cls', 'cls_before_pooler', 'avg', 'avg_top2', 'avg_first_last'], 
+            choices=['cls', 'cls_before_pooler', 'avg', 'avg_top2', 'avg_first_last', 'w_avg'], 
             default='cls', 
             help="Which pooler to use")
     parser.add_argument("--mode", type=str, 
@@ -46,6 +46,7 @@ def main():
                      'MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC', 'MRPC',
                      'SICKRelatedness', 'STSBenchmark'], 
             help="Tasks to evaluate on. If '--task_set' is specified, this will be overridden")
+    parser.add_argument("--is_encoder", type=bool, default=False)
     
     args = parser.parse_args()
     
@@ -108,34 +109,45 @@ def main():
         # Move to the correct device
         for k in batch:
             batch[k] = batch[k].to(device)
-        
+            
         # Get raw embeddings
         with torch.no_grad():
             outputs = model(**batch, output_hidden_states=True, return_dict=True)
+            
+        if args.is_encoder:
             last_hidden = outputs.last_hidden_state
             pooler_output = outputs.pooler_output
             hidden_states = outputs.hidden_states
 
-        # Apply different poolers
-        if args.pooler == 'cls':
-            # There is a linear+activation layer after CLS representation
-            return pooler_output.cpu()
-        elif args.pooler == 'cls_before_pooler':
-            return last_hidden[:, 0].cpu()
-        elif args.pooler == "avg":
-            return ((last_hidden * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)).cpu()
-        elif args.pooler == "avg_first_last":
-            first_hidden = hidden_states[1]
-            last_hidden = hidden_states[-1]
-            pooled_result = ((first_hidden + last_hidden) / 2.0 * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)
-            return pooled_result.cpu()
-        elif args.pooler == "avg_top2":
-            second_last_hidden = hidden_states[-2]
-            last_hidden = hidden_states[-1]
-            pooled_result = ((last_hidden + second_last_hidden) / 2.0 * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)
-            return pooled_result.cpu()
+            # Apply different poolers
+            if args.pooler == 'cls':
+                # There is a linear+activation layer after CLS representation
+                return pooler_output.cpu()
+            elif args.pooler == 'cls_before_pooler':
+                return last_hidden[:, 0].cpu()
+            elif args.pooler == "avg":
+                return ((last_hidden * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)).cpu()
+            elif args.pooler == "avg_first_last":
+                first_hidden = hidden_states[1]
+                last_hidden = hidden_states[-1]
+                pooled_result = ((first_hidden + last_hidden) / 2.0 * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)
+                return pooled_result.cpu()
+            elif args.pooler == "avg_top2":
+                second_last_hidden = hidden_states[-2]
+                last_hidden = hidden_states[-1]
+                pooled_result = ((last_hidden + second_last_hidden) / 2.0 * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)
+                return pooled_result.cpu()
+            else:
+                raise NotImplementedError
         else:
-            raise NotImplementedError
+            last_hidden = outputs.last_hidden_state
+            if args.pooler == "avg":
+                return ((last_hidden * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)).cpu()
+            elif args.pooler == "w_avg":
+                idx = batch['attention_mask'].cumsum(dim=1)
+                return ((last_hidden * idx.unsqueeze(-1)).sum(1) / idx.sum(-1).unsqueeze(-1)).cpu()
+            else:
+                raise NotImplementedError
 
     results = {}
 

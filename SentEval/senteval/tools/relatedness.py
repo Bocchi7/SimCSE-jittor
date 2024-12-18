@@ -15,7 +15,7 @@ import numpy as np
 
 import torch
 from torch import nn
-import torch.optim as optim
+import jittor.optim as optim
 
 from scipy.stats import pearsonr, spearmanr
 
@@ -116,7 +116,7 @@ class RelatednessPytorch(object):
                 all_costs.append(loss.item())
                 # backward
                 self.optimizer.zero_grad()
-                loss.backward()
+                self.optimizer.backward(loss)
                 # Update parameters
                 self.optimizer.step()
         self.nepoch += nepoches

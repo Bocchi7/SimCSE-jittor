@@ -11,7 +11,7 @@ import warnings
 from pathlib import Path
 import importlib.util
 from packaging import version
-from transformers import Trainer
+from transformers.trainer import Trainer
 from transformers.modeling_utils import PreTrainedModel
 from transformers.training_args import ParallelMode, TrainingArguments
 from transformers.utils import logging
@@ -52,10 +52,10 @@ from transformers.data.data_collator import DataCollator, DataCollatorWithPaddin
 import torch
 import torch.nn as nn
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
-from torch.utils.data.dataloader import DataLoader
-from torch.utils.data.dataset import Dataset
-from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data.sampler import RandomSampler, SequentialSampler
+import jittor
+from jittor.dataset import DataLoader
+from jittor.dataset import Dataset
+from jittor.dataset import RandomSampler, SequentialSampler
 
 if is_torch_tpu_available():
     import torch_xla.core.xla_model as xm
@@ -67,7 +67,7 @@ if is_apex_available():
 
 if version.parse(torch.__version__) >= version.parse("1.6"):
     _is_native_amp_available = True
-    from torch.cuda.amp import autocast
+    # from torch.cuda.amp import autocast
 
 if is_datasets_available():
     import datasets
@@ -188,9 +188,11 @@ class CLTrainer(Trainer):
                 elif self.is_world_process_zero() and not self.deepspeed:
                     # deepspeed.save_checkpoint above saves model/optim/sched
                     torch.save(self.optimizer.state_dict(), os.path.join(output_dir, "optimizer.pt"))
-                    with warnings.catch_warnings(record=True) as caught_warnings:
-                        torch.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
-                    reissue_pt_warnings(caught_warnings)
+                    
+                    # Jittor doesn't support...
+                    # with warnings.catch_warnings(record=True) as caught_warnings:
+                    #     torch.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, "scheduler.pt"))
+                    # reissue_pt_warnings(caught_warnings)
 
                 # Save the Trainer state
                 if self.is_world_process_zero():
@@ -432,8 +434,8 @@ class CLTrainer(Trainer):
                 for _ in train_dataloader:
                     break
         for epoch in range(epochs_trained, num_train_epochs):
-            if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
-                train_dataloader.sampler.set_epoch(epoch)
+            # if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
+            #     train_dataloader.sampler.set_epoch(epoch)
             epoch_iterator = train_dataloader
 
             # Reset the past mems state at the beginning of each epoch if necessary.
@@ -459,9 +461,11 @@ class CLTrainer(Trainer):
                 if ((step + 1) % self.args.gradient_accumulation_steps != 0) and self.args.local_rank != -1:
                     # Avoid unnecessary DDP synchronization since there will be no backward pass on this example.
                     with model.no_sync():
-                        tr_loss += self.training_step(model, inputs)
+                        tr_loss += self.training_step(model, inputs,
+                                                      optimizer=self.optimizer)
                 else:
-                    tr_loss += self.training_step(model, inputs)
+                    tr_loss += self.training_step(model, inputs,
+                                                  optimizer=self.optimizer)
                 self._total_flos += self.floating_point_ops(inputs)
 
                 if (step + 1) % self.args.gradient_accumulation_steps == 0 or (

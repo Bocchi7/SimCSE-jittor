@@ -3,10 +3,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 
+import jittor as jt
+
 import transformers
 from transformers import RobertaTokenizer
 from transformers.models.roberta.modeling_roberta import RobertaPreTrainedModel, RobertaModel, RobertaLMHead
 from transformers.models.bert.modeling_bert import BertPreTrainedModel, BertModel, BertLMPredictionHead
+from transformers.models.gpt2.modeling_gpt2 import GPT2PreTrainedModel, GPT2Model
 from transformers.activations import gelu
 from transformers.file_utils import (
     add_code_sample_docstrings,
@@ -37,13 +40,22 @@ class Similarity(nn.Module):
     Dot product or cosine similarity
     """
 
-    def __init__(self, temp):
+    def __init__(self, temp, eps=1e-8):
         super().__init__()
         self.temp = temp
-        self.cos = nn.CosineSimilarity(dim=-1)
+        # self.cos = nn.CosineSimilarity(dim=-1)
+        self.dim = -1
+        self.eps = eps
 
     def forward(self, x, y):
-        return self.cos(x, y) / self.temp
+        z = (x * y).sum(dim = self.dim)
+        x2 = (x * x).sum(dim = self.dim)
+        y2 = (y * y).sum(dim = self.dim)
+        return z / (
+            # jt.sqrt((x * x).sum() + self.eps) * 
+            # jt.sqrt((y * y).sum() + self.eps)
+            jt.maximum(jt.sqrt(x2 * y2), self.eps) # See F.cosine_similarity
+        ) / self.temp
 
 
 class Pooler(nn.Module):
@@ -54,41 +66,60 @@ class Pooler(nn.Module):
     'avg': average of the last layers' hidden states at each token.
     'avg_top2': average of the last two layers.
     'avg_first_last': average of the first and the last layers.
+
+    For decoder-based model:
+    'avg': average of the last layers' hidden states at each token.
+    'w_avg': weighted average of the last layers' hidden states at each token.
+    (TODO)
     """
-    def __init__(self, pooler_type):
+    def __init__(self, pooler_type, is_encoder=True):
         super().__init__()
         self.pooler_type = pooler_type
-        assert self.pooler_type in ["cls", "cls_before_pooler", "avg", "avg_top2", "avg_first_last"], "unrecognized pooling type %s" % self.pooler_type
+        self.is_encoder = is_encoder
+        if is_encoder:
+            assert self.pooler_type in ["cls", "cls_before_pooler", "avg", "avg_top2", "avg_first_last"], "unrecognized pooling type %s" % self.pooler_type
+        else:
+            assert self.pooler_type in ["avg", "w_avg"], "unrecognized pooling type %s" % self.pooler_type
 
     def forward(self, attention_mask, outputs):
-        last_hidden = outputs.last_hidden_state
-        pooler_output = outputs.pooler_output
-        hidden_states = outputs.hidden_states
+        if self.is_encoder:
+            last_hidden = outputs.last_hidden_state
+            pooler_output = outputs.pooler_output
+            hidden_states = outputs.hidden_states
 
-        if self.pooler_type in ['cls_before_pooler', 'cls']:
-            return last_hidden[:, 0]
-        elif self.pooler_type == "avg":
-            return ((last_hidden * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1))
-        elif self.pooler_type == "avg_first_last":
-            first_hidden = hidden_states[1]
-            last_hidden = hidden_states[-1]
-            pooled_result = ((first_hidden + last_hidden) / 2.0 * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1)
-            return pooled_result
-        elif self.pooler_type == "avg_top2":
-            second_last_hidden = hidden_states[-2]
-            last_hidden = hidden_states[-1]
-            pooled_result = ((last_hidden + second_last_hidden) / 2.0 * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1)
-            return pooled_result
+            if self.pooler_type in ['cls_before_pooler', 'cls']:
+                return last_hidden[:, 0]
+            elif self.pooler_type == "avg":
+                return ((last_hidden * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1))
+            elif self.pooler_type == "avg_first_last":
+                first_hidden = hidden_states[1]
+                last_hidden = hidden_states[-1]
+                pooled_result = ((first_hidden + last_hidden) / 2.0 * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1)
+                return pooled_result
+            elif self.pooler_type == "avg_top2":
+                second_last_hidden = hidden_states[-2]
+                last_hidden = hidden_states[-1]
+                pooled_result = ((last_hidden + second_last_hidden) / 2.0 * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1)
+                return pooled_result
+            else:
+                raise NotImplementedError
         else:
-            raise NotImplementedError
+            last_hidden = outputs.last_hidden_state
+            if self.pooler_type == "avg":
+                return ((last_hidden * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1))
+            elif self.pooler_type == "w_avg":
+                idx = attention_mask.cumsum(dim=1)
+                return ((last_hidden * idx.unsqueeze(-1)).sum(1) / idx.sum(-1).unsqueeze(-1))
+            else:
+                raise NotImplementedError
 
 
-def cl_init(cls, config):
+def cl_init(cls, config, is_encoder = True):
     """
     Contrastive learning class init function.
     """
     cls.pooler_type = cls.model_args.pooler_type
-    cls.pooler = Pooler(cls.model_args.pooler_type)
+    cls.pooler = Pooler(cls.model_args.pooler_type, is_encoder=is_encoder)
     if cls.model_args.pooler_type == "cls":
         cls.mlp = MLPLayer(config)
     cls.sim = Similarity(temp=cls.model_args.temp)
@@ -176,20 +207,26 @@ def cl_forward(cls,
             z3_list[dist.get_rank()] = z3
             z3 = torch.cat(z3_list, 0)
 
-        # Dummy vectors for allgather
-        z1_list = [torch.zeros_like(z1) for _ in range(dist.get_world_size())]
-        z2_list = [torch.zeros_like(z2) for _ in range(dist.get_world_size())]
-        # Allgather
-        dist.all_gather(tensor_list=z1_list, tensor=z1.contiguous())
-        dist.all_gather(tensor_list=z2_list, tensor=z2.contiguous())
+        if dist.get_world_size() > 1:
+            # not suppported by jittor...
+            raise NotImplementedError
+        
+            # Dummy vectors for allgather
+            z1_list = [torch.zeros_like(z1) for _ in range(dist.get_world_size())]
+            z2_list = [torch.zeros_like(z2) for _ in range(dist.get_world_size())]
+            # Allgather
+            dist.all_gather(tensor_list=z1_list, tensor=z1.contiguous())
+            dist.all_gather(tensor_list=z2_list, tensor=z2.contiguous())
 
-        # Since allgather results do not have gradients, we replace the
-        # current process's corresponding embeddings with original tensors
-        z1_list[dist.get_rank()] = z1
-        z2_list[dist.get_rank()] = z2
-        # Get full batch embeddings: (bs x N, hidden)
-        z1 = torch.cat(z1_list, 0)
-        z2 = torch.cat(z2_list, 0)
+            # Since allgather results do not have gradients, we replace the
+            # current process's corresponding embeddings with original tensors
+            z1_list[dist.get_rank()] = z1
+            z2_list[dist.get_rank()] = z2
+            # Get full batch embeddings: (bs x N, hidden)
+            z1 = torch.cat(z1_list, 0)
+            z2 = torch.cat(z2_list, 0)
+        else:
+            pass
 
     cos_sim = cls.sim(z1.unsqueeze(1), z2.unsqueeze(0))
     # Hard negative
@@ -374,6 +411,62 @@ class RobertaForCL(RobertaPreTrainedModel):
             )
         else:
             return cl_forward(self, self.roberta,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                labels=labels,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+                mlm_input_ids=mlm_input_ids,
+                mlm_labels=mlm_labels,
+            )
+
+
+class GPT2ForCL(GPT2PreTrainedModel):
+    _keys_to_ignore_on_load_missing = [r"h\.\d+\.attn\.masked_bias", r"lm_head\.weight"] # reference: GPT2LMHeadModel
+    
+    def __init__(self, config, *model_args, **model_kargs):
+        super().__init__(config)
+        self.model_args = model_kargs["model_args"]
+        self.transformer = GPT2Model(config) # Name must be "self.transformer". reference: GPT2LMHeadModel
+
+        cl_init(self, config, is_encoder=False)
+
+        self.model_parallel = False # reference: GPT2LMHeadModel
+    def forward(self,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        labels=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+        sent_emb=False,
+        mlm_input_ids=None, 
+        mlm_labels=None,
+    ):
+        if sent_emb:
+            return sentemb_forward(self, self.transformer,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                position_ids=position_ids,
+                head_mask=head_mask,
+                inputs_embeds=inputs_embeds,
+                labels=labels,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+            )
+        else:
+            return cl_forward(self, self.transformer,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 token_type_ids=token_type_ids,

@@ -18,8 +18,8 @@ import math
 from typing import Callable, Iterable, Optional, Tuple, Union
 
 import torch
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LambdaLR
+from jittor.optim import Optimizer
+from jittor.optim import LambdaLR
 
 from .trainer_utils import SchedulerType
 from .utils import logging

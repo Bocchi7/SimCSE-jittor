@@ -24,7 +24,7 @@ from typing import List, Optional, Union
 
 import numpy as np
 import torch
-from torch.utils.data.distributed import DistributedSampler
+# from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data.sampler import RandomSampler, Sampler
 
 from .file_utils import is_torch_tpu_available
@@ -217,11 +217,11 @@ class SequentialDistributedSampler(Sampler):
     def __len__(self):
         return self.num_samples
 
-
-def get_tpu_sampler(dataset: torch.utils.data.dataset.Dataset):
-    if xm.xrt_world_size() <= 1:
-        return RandomSampler(dataset)
-    return DistributedSampler(dataset, num_replicas=xm.xrt_world_size(), rank=xm.get_ordinal())
+# jittor 不支持。
+# def get_tpu_sampler(dataset: torch.utils.data.dataset.Dataset):
+#     if xm.xrt_world_size() <= 1:
+#         return RandomSampler(dataset)
+#     return DistributedSampler(dataset, num_replicas=xm.xrt_world_size(), rank=xm.get_ordinal())
 
 
 def nested_new_like(arrays, num_samples, padding_index=-100):

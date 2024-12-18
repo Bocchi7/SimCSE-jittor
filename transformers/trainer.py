@@ -48,17 +48,28 @@ from .integrations import (  # isort: split
 import numpy as np
 import torch
 from packaging import version
+
+# JTorch 将 torch 重定向为了 jittor，可以避免大量的代码修改
 from torch import nn
-from torch.utils.data.dataloader import DataLoader
-from torch.utils.data.dataset import Dataset
-from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data.sampler import RandomSampler, SequentialSampler
+import torch
+import jittor as jt
+
+from jittor.dataset import DataLoader
+from jittor.dataset import Dataset
+from jittor.dataset import RandomSampler, SequentialSampler
+
+# Jittor 不支持！
+# from torch.utils.data.distributed import DistributedSampler
+
+import datasets
 
 from .data.data_collator import DataCollator, DataCollatorWithPadding, default_data_collator
 from .file_utils import WEIGHTS_NAME, is_apex_available, is_datasets_available, is_in_notebook, is_torch_tpu_available
 from .modeling_utils import PreTrainedModel
 from .models.auto.modeling_auto import MODEL_FOR_QUESTION_ANSWERING_MAPPING
-from .optimization import Adafactor, AdamW, get_scheduler
+from .optimization import Adafactor, get_scheduler
+from jittor.optim import AdamW 
+
 from .tokenization_utils_base import PreTrainedTokenizerBase
 from .trainer_callback import (
     CallbackHandler,
@@ -75,7 +86,7 @@ from .trainer_pt_utils import (
     SequentialDistributedSampler,
     distributed_broadcast_scalars,
     distributed_concat,
-    get_tpu_sampler,
+    # get_tpu_sampler,
     nested_concat,
     nested_detach,
     nested_numpify,
@@ -113,7 +124,7 @@ if is_apex_available():
 
 if version.parse(torch.__version__) >= version.parse("1.6"):
     _is_native_amp_available = True
-    from torch.cuda.amp import autocast
+    # from torch.cuda.amp import autocast
 
 if is_datasets_available():
     import datasets
@@ -444,11 +455,11 @@ class Trainer:
         dataset.set_format(type=dataset.format["type"], columns=columns)
 
     def _get_train_sampler(self) -> Optional[torch.utils.data.sampler.Sampler]:
-        if isinstance(self.train_dataset, torch.utils.data.IterableDataset) or not isinstance(
-            self.train_dataset, collections.abc.Sized
-        ):
-            return None
-        elif is_torch_tpu_available():
+        # if isinstance(self.train_dataset, IterableDataset) or not isinstance(
+        #     self.train_dataset, collections.abc.Sized
+        # ):
+        #     return None
+        if is_torch_tpu_available():
             return get_tpu_sampler(self.train_dataset)
         else:
             return (
@@ -459,7 +470,7 @@ class Trainer:
 
     def get_train_dataloader(self) -> DataLoader:
         """
-        Returns the training :class:`~torch.utils.data.DataLoader`.
+        Returns the training :class:`~jt.dataset.DataLoader`.
 
         Will use no sampler if :obj:`self.train_dataset` does not implement :obj:`__len__`, a random sampler (adapted
         to distributed training if necessary) otherwise.
@@ -561,15 +572,20 @@ class Trainer:
                     "weight_decay": 0.0,
                 },
             ]
-            optimizer_cls = Adafactor if self.args.adafactor else AdamW
+            
+            # optimizer_cls = Adafactor if self.args.adafactor else AdamW
+            optimizer_cls = AdamW
+            
             if self.args.adafactor:
-                optimizer_cls = Adafactor
-                optimizer_kwargs = {"scale_parameter": False, "relative_step": False}
+                raise NotImplementedError
+                # optimizer_cls = Adafactor
+                # optimizer_kwargs = {"scale_parameter": False, "relative_step": False}
             else:
                 optimizer_cls = AdamW
                 optimizer_kwargs = {
                     "betas": (self.args.adam_beta1, self.args.adam_beta2),
                     "eps": self.args.adam_epsilon,
+                    "weight_decay": 1e-2,
                 }
             optimizer_kwargs["lr"] = self.args.learning_rate
             if self.sharded_dpp:
@@ -1221,7 +1237,8 @@ class Trainer:
 
         return inputs
 
-    def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
+    def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]],
+                      optimizer=None) -> torch.Tensor:
         """
         Perform a training step on a batch of inputs.
 
@@ -1264,7 +1281,8 @@ class Trainer:
             # calling on DS engine (model_wrapped == DDP(Deepspeed(PretrainedModule)))
             self.model_wrapped.module.backward(loss)
         else:
-            loss.backward()
+            # loss.backward()
+            optimizer.backward(loss)
 
         return loss.detach()
 
@@ -1354,7 +1372,10 @@ class Trainer:
             self.tokenizer.save_pretrained(output_dir)
 
         # Good practice: save your training arguments together with the trained model
-        torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
+        #
+        # but jittor don't support ....
+        #
+        # torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
 
     def store_flos(self):
         # Storing the number of floating-point operations that went into the model

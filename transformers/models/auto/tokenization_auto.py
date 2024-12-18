@@ -27,7 +27,7 @@ from ..bertweet.tokenization_bertweet import BertweetTokenizer
 from ..blenderbot.tokenization_blenderbot import BlenderbotTokenizer
 from ..blenderbot_small.tokenization_blenderbot_small import BlenderbotSmallTokenizer
 from ..ctrl.tokenization_ctrl import CTRLTokenizer
-from ..deberta.tokenization_deberta import DebertaTokenizer
+# from ..deberta.tokenization_deberta import DebertaTokenizer
 from ..distilbert.tokenization_distilbert import DistilBertTokenizer
 from ..dpr.tokenization_dpr import DPRQuestionEncoderTokenizer
 from ..electra.tokenization_electra import ElectraTokenizer
@@ -39,7 +39,7 @@ from ..herbert.tokenization_herbert import HerbertTokenizer
 from ..layoutlm.tokenization_layoutlm import LayoutLMTokenizer
 from ..led.tokenization_led import LEDTokenizer
 from ..longformer.tokenization_longformer import LongformerTokenizer
-from ..lxmert.tokenization_lxmert import LxmertTokenizer
+# from ..lxmert.tokenization_lxmert import LxmertTokenizer
 from ..mobilebert.tokenization_mobilebert import MobileBertTokenizer
 from ..mpnet.tokenization_mpnet import MPNetTokenizer
 from ..openai.tokenization_openai import OpenAIGPTTokenizer
@@ -62,7 +62,7 @@ from .configuration_auto import (
     BlenderbotSmallConfig,
     CamembertConfig,
     CTRLConfig,
-    DebertaConfig,
+    # DebertaConfig,
     DistilBertConfig,
     DPRConfig,
     ElectraConfig,
@@ -74,7 +74,7 @@ from .configuration_auto import (
     LayoutLMConfig,
     LEDConfig,
     LongformerConfig,
-    LxmertConfig,
+    # LxmertConfig,
     MarianConfig,
     MBartConfig,
     MobileBertConfig,
@@ -84,7 +84,7 @@ from .configuration_auto import (
     PegasusConfig,
     ProphetNetConfig,
     RagConfig,
-    ReformerConfig,
+    # ReformerConfig,
     RetriBertConfig,
     RobertaConfig,
     SqueezeBertConfig,
@@ -143,14 +143,14 @@ if is_tokenizers_available():
     from ..layoutlm.tokenization_layoutlm_fast import LayoutLMTokenizerFast
     from ..led.tokenization_led_fast import LEDTokenizerFast
     from ..longformer.tokenization_longformer_fast import LongformerTokenizerFast
-    from ..lxmert.tokenization_lxmert_fast import LxmertTokenizerFast
+    # from ..lxmert.tokenization_lxmert_fast import LxmertTokenizerFast
     from ..mbart.tokenization_mbart_fast import MBartTokenizerFast
     from ..mobilebert.tokenization_mobilebert_fast import MobileBertTokenizerFast
     from ..mpnet.tokenization_mpnet_fast import MPNetTokenizerFast
     from ..mt5 import MT5TokenizerFast
     from ..openai.tokenization_openai_fast import OpenAIGPTTokenizerFast
     from ..pegasus.tokenization_pegasus_fast import PegasusTokenizerFast
-    from ..reformer.tokenization_reformer_fast import ReformerTokenizerFast
+    # from ..reformer.tokenization_reformer_fast import ReformerTokenizerFast
     from ..retribert.tokenization_retribert_fast import RetriBertTokenizerFast
     from ..roberta.tokenization_roberta_fast import RobertaTokenizerFast
     from ..squeezebert.tokenization_squeezebert_fast import SqueezeBertTokenizerFast
@@ -208,10 +208,10 @@ TOKENIZER_MAPPING = OrderedDict(
         (BartConfig, (BartTokenizer, BartTokenizerFast)),
         (LongformerConfig, (LongformerTokenizer, LongformerTokenizerFast)),
         (RobertaConfig, (RobertaTokenizer, RobertaTokenizerFast)),
-        (ReformerConfig, (ReformerTokenizer, ReformerTokenizerFast)),
+        # (ReformerConfig, (ReformerTokenizer, ReformerTokenizerFast)),
         (ElectraConfig, (ElectraTokenizer, ElectraTokenizerFast)),
         (FunnelConfig, (FunnelTokenizer, FunnelTokenizerFast)),
-        (LxmertConfig, (LxmertTokenizer, LxmertTokenizerFast)),
+        # (LxmertConfig, (LxmertTokenizer, LxmertTokenizerFast)),
         (LayoutLMConfig, (LayoutLMTokenizer, LayoutLMTokenizerFast)),
         (DPRConfig, (DPRQuestionEncoderTokenizer, DPRQuestionEncoderTokenizerFast)),
         (SqueezeBertConfig, (SqueezeBertTokenizer, SqueezeBertTokenizerFast)),
@@ -225,13 +225,13 @@ TOKENIZER_MAPPING = OrderedDict(
         (CTRLConfig, (CTRLTokenizer, None)),
         (FSMTConfig, (FSMTTokenizer, None)),
         (BertGenerationConfig, (BertGenerationTokenizer, None)),
-        (DebertaConfig, (DebertaTokenizer, None)),
+        # (DebertaConfig, (DebertaTokenizer, None)),
         (RagConfig, (RagTokenizer, None)),
         (XLMProphetNetConfig, (XLMProphetNetTokenizer, None)),
         (ProphetNetConfig, (ProphetNetTokenizer, None)),
         (MPNetConfig, (MPNetTokenizer, MPNetTokenizerFast)),
         (TapasConfig, (TapasTokenizer, None)),
-        (LEDConfig, (LEDTokenizer, LEDTokenizerFast)),
+        # (LEDConfig, (LEDTokenizer, LEDTokenizerFast)),
     ]
 )
 

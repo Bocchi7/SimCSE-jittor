@@ -81,9 +81,9 @@ def require_version(requirement: str, hint: Optional[str] = None) -> None:
     except pkg_resources.DistributionNotFound:
         raise pkg_resources.DistributionNotFound(requirement, ["this application", hint])
 
-    if (pkg == 'tokenizers'):
-        import IPython
-        IPython.embed()
+    # if (pkg == 'tokenizers'):
+    #     import IPython
+    #     IPython.embed()
 
     # check that the right version is installed if version number was provided
     if want_ver is not None and not ops[op](version.parse(got_ver), version.parse(want_ver)):

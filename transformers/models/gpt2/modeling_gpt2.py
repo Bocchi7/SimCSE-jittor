@@ -23,6 +23,8 @@ import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss, MSELoss
 
+import numpy as np
+
 from ...activations import ACT2FN
 from ...file_utils import (
     ModelOutput,
@@ -347,12 +349,16 @@ class GPT2PreTrainedModel(PreTrainedModel):
         if isinstance(module, (nn.Linear, nn.Embedding, Conv1D)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            # module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            module.weight.data = np.random.normal(loc=0.0, scale=self.config.initializer_range, size=module.weight.data.shape).astype(module.weight.data.dtype)
             if isinstance(module, (nn.Linear, Conv1D)) and module.bias is not None:
-                module.bias.data.zero_()
+                # module.bias.data.zero_()
+                module.bias.data.fill(0.0)
         elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
+            # module.bias.data.zero_()
+            module.bias.data.fill(0.0)
+            # module.weight.data.fill_(1.0)
+            module.weight.data.fill(1.0)
 
 
 @dataclass

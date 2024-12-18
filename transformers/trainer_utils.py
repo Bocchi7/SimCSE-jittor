@@ -38,10 +38,13 @@ def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     if is_torch_available():
-        import torch
+        # import torch
 
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+        # torch.manual_seed(seed)
+        # torch.cuda.manual_seed_all(seed)
+        import jittor
+        jittor.misc.set_global_seed(seed)
+        
         # ^^ safe to call this function even if cuda is not available
     if is_tf_available():
         import tensorflow as tf

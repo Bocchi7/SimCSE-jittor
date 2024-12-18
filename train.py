@@ -2,6 +2,8 @@ import logging
 import math
 import os
 import sys
+sys.path.append('.')
+
 from dataclasses import dataclass, field
 from typing import Optional, Union, List, Dict, Tuple
 import torch
@@ -9,6 +11,7 @@ import collections
 import random
 
 from datasets import load_dataset
+from jt_dataset import TrainDataset
 
 import transformers
 from transformers import (
@@ -21,7 +24,6 @@ from transformers import (
     DataCollatorForLanguageModeling,
     DataCollatorWithPadding,
     HfArgumentParser,
-    Trainer,
     TrainingArguments,
     default_data_collator,
     set_seed,
@@ -34,7 +36,7 @@ from transformers.tokenization_utils_base import BatchEncoding, PaddingStrategy,
 from transformers.trainer_utils import is_main_process
 from transformers.data.data_collator import DataCollatorForLanguageModeling
 from transformers.file_utils import cached_property, torch_required, is_torch_available, is_torch_tpu_available
-from simcse.models import RobertaForCL, BertForCL
+from simcse.models import RobertaForCL, BertForCL, GPT2ForCL
 from simcse.trainers import CLTrainer
 
 logger = logging.getLogger(__name__)
@@ -337,6 +339,7 @@ def main():
         "revision": model_args.model_revision,
         "use_auth_token": True if model_args.use_auth_token else None,
     }
+    # breakpoint()
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, **tokenizer_kwargs)
     elif model_args.model_name_or_path:
@@ -346,6 +349,9 @@ def main():
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
             "You can do it from another script, save it, and load it from here, using --tokenizer_name."
         )
+    # breakpoint()
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     if model_args.model_name_or_path:
         if 'roberta' in model_args.model_name_or_path:
@@ -371,6 +377,16 @@ def main():
             if model_args.do_mlm:
                 pretrained_model = BertForPreTraining.from_pretrained(model_args.model_name_or_path)
                 model.lm_head.load_state_dict(pretrained_model.cls.predictions.state_dict())
+        elif 'gpt2' in model_args.model_name_or_path:
+            model = GPT2ForCL.from_pretrained(
+                model_args.model_name_or_path,
+                from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                config=config,
+                cache_dir=model_args.cache_dir,
+                revision=model_args.model_revision,
+                use_auth_token=True if model_args.use_auth_token else None,
+                model_args=model_args
+            )
         else:
             raise NotImplementedError
     else:
@@ -450,6 +466,8 @@ def main():
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
         )
+        
+        train_dataset = TrainDataset(train_dataset)
 
     # Data collator
     @dataclass

@@ -54,7 +54,7 @@ from . import (
     phobert,
     prophetnet,
     rag,
-    reformer,
+    # reformer,
     retribert,
     roberta,
     squeezebert,

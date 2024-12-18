@@ -424,7 +424,7 @@ class TrainingArguments:
         if self.run_name is None:
             self.run_name = self.output_dir
 
-        if is_torch_available() and self.device.type != "cuda" and self.fp16:
+        if is_torch_available() and (not self.device.type.startswith("cuda")) and self.fp16:
             raise ValueError("Mixed precision training with AMP or APEX (`--fp16`) can only be used on CUDA devices.")
 
     def __repr__(self):

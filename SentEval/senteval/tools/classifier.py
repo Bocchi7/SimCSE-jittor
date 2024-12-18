@@ -50,10 +50,14 @@ class PyTorchClassifier(object):
 
         device = torch.device('cpu') if self.cudaEfficient else torch.device('cuda')
 
-        trainX = torch.from_numpy(trainX).to(device, dtype=torch.float32)
-        trainy = torch.from_numpy(trainy).to(device, dtype=torch.int64)
-        devX = torch.from_numpy(devX).to(device, dtype=torch.float32)
-        devy = torch.from_numpy(devy).to(device, dtype=torch.int64)
+        # trainX = torch.from_numpy(trainX).to(device, dtype=torch.float32)
+        # trainy = torch.from_numpy(trainy).to(device, dtype=torch.int64)
+        # devX = torch.from_numpy(devX).to(device, dtype=torch.float32)
+        # devy = torch.from_numpy(devy).to(device, dtype=torch.int64)
+        trainX = torch.float32(trainX)
+        trainy = torch.int64(trainy)
+        devX = torch.float32(devX)
+        devy = torch.int64(devy)
 
         return trainX, trainy, devX, devy
 
@@ -89,7 +93,8 @@ class PyTorchClassifier(object):
             all_costs = []
             for i in range(0, len(X), self.batch_size):
                 # forward
-                idx = torch.from_numpy(permutation[i:i + self.batch_size]).long().to(X.device)
+                # idx = torch.from_numpy(permutation[i:i + self.batch_size]).long().to(X.device)
+                idx = torch.long(permutation[i:i + self.batch_size])
 
                 Xbatch = X[idx]
                 ybatch = y[idx]
@@ -103,7 +108,7 @@ class PyTorchClassifier(object):
                 all_costs.append(loss.data.item())
                 # backward
                 self.optimizer.zero_grad()
-                loss.backward()
+                self.optimizer.backward(loss)
                 # Update parameters
                 self.optimizer.step()
         self.nepoch += epoch_size
@@ -111,7 +116,8 @@ class PyTorchClassifier(object):
     def score(self, devX, devy):
         self.model.eval()
         correct = 0
-        if not isinstance(devX, torch.cuda.FloatTensor) or self.cudaEfficient:
+        # if not isinstance(devX, torch.cuda.FloatTensor) or self.cudaEfficient:
+        if not (isinstance(devX, torch.Tensor) and devX.dtype == "float32") or self.cudaEfficient:
             devX = torch.FloatTensor(devX).cuda()
             devy = torch.LongTensor(devy).cuda()
         with torch.no_grad():
@@ -122,14 +128,17 @@ class PyTorchClassifier(object):
                     Xbatch = Xbatch.cuda()
                     ybatch = ybatch.cuda()
                 output = self.model(Xbatch)
-                pred = output.data.max(1)[1]
-                correct += pred.long().eq(ybatch.data.long()).sum().item()
+                # pred = output.data.max(1)[1]
+                pred = output.data.argmax(1)
+                # correct += pred.long().eq(ybatch.data.long()).sum().item()
+                correct += np.equal(pred, ybatch).sum().item()
             accuracy = 1.0 * correct / len(devX)
         return accuracy
 
     def predict(self, devX):
         self.model.eval()
-        if not isinstance(devX, torch.cuda.FloatTensor):
+        # if not isinstance(devX, torch.cuda.FloatTensor):
+        if not (isinstance(devX, torch.Tensor) and devX.dtype == "float32"):
             devX = torch.FloatTensor(devX).cuda()
         yhat = np.array([])
         with torch.no_grad():
@@ -137,7 +146,8 @@ class PyTorchClassifier(object):
                 Xbatch = devX[i:i + self.batch_size]
                 output = self.model(Xbatch)
                 yhat = np.append(yhat,
-                                 output.data.max(1)[1].cpu().numpy())
+                                 output.data.argmax(1))
+                                #  output.data.max(1)[1].cpu().numpy())
         yhat = np.vstack(yhat)
         return yhat
 
@@ -198,5 +208,5 @@ class MLP(PyTorchClassifier):
         self.loss_fn.size_average = False
 
         optim_fn, optim_params = utils.get_optimizer(self.optim)
-        self.optimizer = optim_fn(self.model.parameters(), **optim_params)
+        self.optimizer = optim_fn(list(self.model.parameters()), **optim_params)
         self.optimizer.param_groups[0]['weight_decay'] = self.l2reg

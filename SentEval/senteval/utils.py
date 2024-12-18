@@ -10,7 +10,7 @@ from __future__ import absolute_import, division, unicode_literals
 import numpy as np
 import re
 import inspect
-from torch import optim
+from jittor import optim
 
 
 def create_dictionary(sentences):

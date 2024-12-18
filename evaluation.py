@@ -46,7 +46,7 @@ def main():
                      'MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC', 'MRPC',
                      'SICKRelatedness', 'STSBenchmark'], 
             help="Tasks to evaluate on. If '--task_set' is specified, this will be overridden")
-    parser.add_argument("--is_encoder", type=bool, default=False)
+    parser.add_argument("--is_encoder", type=bool, default=True)
     
     args = parser.parse_args()
     

@@ -154,7 +154,7 @@ def prune_layer(
     Returns:
         `torch.nn.Linear` or [`~pytorch_utils.Conv1D`]: The pruned layer as a new layer with `requires_grad=True`.
     """
-    if isinstance(layer, nn.Linear):
+    if isinstance(layer, (nn.Linear, jt.nn.Linear)):
         return prune_linear_layer(layer, index, dim=0 if dim is None else dim)
     elif isinstance(layer, Conv1D):
         return prune_conv1d_layer(layer, index, dim=1 if dim is None else dim)

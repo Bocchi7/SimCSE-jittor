@@ -49,6 +49,7 @@ from ...utils import logging
 from ...utils.model_parallel_utils import assert_device_map, get_device_map
 from .configuration_gpt2 import GPT2Config
 
+from ..__FP16_Layers import FP16_Conv1D, FP16_Linear, FP16_Matmul
 
 logger = logging.get_logger(__name__)
 
@@ -137,12 +138,26 @@ class Attention(nn.Module):
         self.split_size = n_state
         self.scale = scale
         self.is_cross_attention = is_cross_attention
+        
+        self.use_fp16 = config.__dict__.get('use_fp16', False)
+
         if self.is_cross_attention:
-            self.c_attn = Conv1D(2 * n_state, nx)
-            self.q_attn = Conv1D(n_state, nx)
+            self.c_attn = Conv1D(2 * n_state, nx) if not self.use_fp16 \
+                else FP16_Conv1D(2 * n_state, nx)
+            
+            self.q_attn = Conv1D(n_state, nx) if not self.use_fp16 \
+                else FP16_Conv1D(n_state, nx)
         else:
-            self.c_attn = Conv1D(3 * n_state, nx)
-        self.c_proj = Conv1D(n_state, nx)
+            self.c_attn = Conv1D(3 * n_state, nx) if not self.use_fp16 \
+                else FP16_Conv1D(3 * n_state, nx)
+        
+        self.c_proj = Conv1D(n_state, nx) if not self.use_fp16 \
+            else FP16_Conv1D(n_state, nx)
+        
+        if self.use_fp16:
+            self.mm1 = FP16_Matmul()
+            self.mm2 = FP16_Matmul()
+        
         self.attn_dropout = nn.Dropout(config.attn_pdrop)
         self.resid_dropout = nn.Dropout(config.resid_pdrop)
         self.pruned_heads = set()
@@ -165,7 +180,9 @@ class Attention(nn.Module):
         self.pruned_heads = self.pruned_heads.union(heads)
 
     def _attn(self, q, k, v, attention_mask=None, head_mask=None, output_attentions=False):
-        w = torch.matmul(q, k)
+        w = torch.matmul(q, k) if not self.use_fp16 else \
+            self.mm1(q, k)
+        
         if self.scale:
             w = w / (float(v.size(-1)) ** 0.5)
         nd, ns = w.size(-2), w.size(-1)
@@ -186,7 +203,9 @@ class Attention(nn.Module):
         if head_mask is not None:
             w = w * head_mask
 
-        outputs = (torch.matmul(w, v),)
+        outputs = (torch.matmul(w, v) if not self.use_fp16 else \
+                   self.mm2(w, v)
+                   ,)
         if output_attentions:
             outputs += (w,)
         return outputs
@@ -252,13 +271,19 @@ class MLP(nn.Module):
     def __init__(self, n_state, config):  # in MLP: n_state=3072 (4 * n_embd)
         super().__init__()
         nx = config.n_embd
-        self.c_fc = Conv1D(n_state, nx)
-        self.c_proj = Conv1D(nx, n_state)
+        
+        self.use_fp16 = config.__dict__.get('use_fp16', False)
+        self.c_fc = Conv1D(n_state, nx) if not self.use_fp16 \
+          else FP16_Conv1D(n_state, nx)
+        
+        self.c_proj = Conv1D(nx, n_state) if not self.use_fp16 \
+            else FP16_Conv1D(nx, n_state)
+        
         self.act = ACT2FN[config.activation_function]
         self.dropout = nn.Dropout(config.resid_pdrop)
 
     def forward(self, x):
-        h = self.act(self.c_fc(x))
+        h = self.act(self.c_fc(x).float32())
         h2 = self.c_proj(h)
         return self.dropout(h2)
 
@@ -799,7 +824,10 @@ class GPT2LMHeadModel(GPT2PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.transformer = GPT2Model(config)
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        
+        self.use_fp16 = False # config.__dict__.get('use_fp16', False)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False) if not self.use_fp16 \
+                else FP16_Linear(config.n_embd, config.vocab_size, bias=False)
 
         self.init_weights()
 
@@ -952,7 +980,11 @@ class GPT2DoubleHeadsModel(GPT2PreTrainedModel):
         super().__init__(config)
         config.num_labels = 1
         self.transformer = GPT2Model(config)
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        
+        self.use_fp16 = False #config.__dict__.get('use_fp16', False)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False) if not self.use_fp16 \
+                else FP16_Linear(config.n_embd, config.vocab_size, bias=False)
+
         self.multiple_choice_head = SequenceSummary(config)
 
         self.init_weights()
@@ -1123,7 +1155,11 @@ class GPT2ForSequenceClassification(GPT2PreTrainedModel):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.transformer = GPT2Model(config)
-        self.score = nn.Linear(config.n_embd, self.num_labels, bias=False)
+        
+        
+        self.use_fp16 = False # config.__dict__.get('use_fp16', False)
+        self.score = nn.Linear(config.n_embd, self.num_labels, bias=False) if not self.use_fp16 \
+              else FP16_Linear(config.n_embd, self.num_labels, bias=False)
 
         self.init_weights()
 

@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """PyTorch BERT model. """
-from ..__FP16_Layers import FP16_Linear, FP16_Matmul
+from ..__FP16_Layers import FP16_Linear
 import jittor as jt
 
 import math
@@ -23,10 +23,9 @@ import warnings
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-import torch
-import torch.utils.checkpoint
-from torch import nn
-from torch.nn import CrossEntropyLoss, MSELoss
+import jittor
+from jittor import nn
+from jittor.nn import CrossEntropyLoss, MSELoss
 
 from ...activations import ACT2FN
 from ...file_utils import (
@@ -159,7 +158,7 @@ def load_tf_weights_in_bert(model, config, tf_checkpoint_path):
             e.args += (pointer.shape, array.shape)
             raise
         logger.info("Initialize PyTorch weight {}".format(name))
-        pointer.data = torch.from_numpy(array)
+        pointer.data = jt.from_numpy(array)
     return model
 
 
@@ -178,7 +177,7 @@ class BertEmbeddings(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
-        self.register_buffer("position_ids", torch.arange(config.max_position_embeddings).expand((1, -1)))
+        self.register_buffer("position_ids", jt.arange(config.max_position_embeddings).expand((1, -1)))
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
 
     def forward(
@@ -195,7 +194,7 @@ class BertEmbeddings(nn.Module):
             position_ids = self.position_ids[:, past_key_values_length : seq_length + past_key_values_length]
 
         if token_type_ids is None:
-            token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=self.position_ids.device)
+            token_type_ids = jt.zeros(input_shape, dtype=jt.long, device=self.position_ids.device)
 
         if inputs_embeds is None:
             inputs_embeds = self.word_embeddings(input_ids)
@@ -223,13 +222,13 @@ class BertSelfAttention(nn.Module):
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
         
-        self.use_fp16 = config.__dict__.get('use_fp16', False)
+        self.not_fp16 = not config.__dict__.get('use_fp16', False)
         
-        self.query = nn.Linear(config.hidden_size, self.all_head_size) if not self.use_fp16 else \
+        self.query = nn.Linear(config.hidden_size, self.all_head_size) if self.not_fp16 else \
                    FP16_Linear(config.hidden_size, self.all_head_size)
-        self.key   = nn.Linear(config.hidden_size, self.all_head_size) if not self.use_fp16 else \
+        self.key   = nn.Linear(config.hidden_size, self.all_head_size) if self.not_fp16 else \
                    FP16_Linear(config.hidden_size, self.all_head_size)
-        self.value = nn.Linear(config.hidden_size, self.all_head_size) if not self.use_fp16 else \
+        self.value = nn.Linear(config.hidden_size, self.all_head_size) if self.not_fp16 else \
                    FP16_Linear(config.hidden_size, self.all_head_size)
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
@@ -239,8 +238,6 @@ class BertSelfAttention(nn.Module):
             self.distance_embedding = nn.Embedding(2 * config.max_position_embeddings - 1, self.attention_head_size)
 
         self.is_decoder = config.is_decoder
-        self.mm1 = FP16_Matmul()
-        self.mm2 = FP16_Matmul()
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
@@ -257,9 +254,6 @@ class BertSelfAttention(nn.Module):
         past_key_value=None,
         output_attentions=False,
     ):
-        if self.use_fp16:
-            hidden_states = hidden_states.float16()
-        
         mixed_query_layer = self.query(hidden_states)
 
         # If this is instantiated as a cross-attention module, the keys
@@ -279,8 +273,8 @@ class BertSelfAttention(nn.Module):
         elif past_key_value is not None:
             key_layer = self.transpose_for_scores(self.key(hidden_states))
             value_layer = self.transpose_for_scores(self.value(hidden_states))
-            key_layer = torch.cat([past_key_value[0], key_layer], dim=2)
-            value_layer = torch.cat([past_key_value[1], value_layer], dim=2)
+            key_layer = jt.cat([past_key_value[0], key_layer], dim=2)
+            value_layer = jt.cat([past_key_value[1], value_layer], dim=2)
         else:
             key_layer = self.transpose_for_scores(self.key(hidden_states))
             value_layer = self.transpose_for_scores(self.value(hidden_states))
@@ -288,34 +282,32 @@ class BertSelfAttention(nn.Module):
         query_layer = self.transpose_for_scores(mixed_query_layer)
 
         if self.is_decoder:
-            # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
+            # if cross_attention save Tuple(jt.Tensor, jt.Tensor) of all cross attention key/value_states.
             # Further calls to cross_attention layer can then reuse all cross-attention
             # key/value_states (first "if" case)
-            # if uni-directional self-attention (decoder) save Tuple(torch.Tensor, torch.Tensor) of
+            # if uni-directional self-attention (decoder) save Tuple(jt.Tensor, jt.Tensor) of
             # all previous decoder key/value_states. Further calls to uni-directional self-attention
             # can concat previous decoder key/value_states to current projected key/value_states (third "elif" case)
             # if encoder bi-directional self-attention `past_key_value` is always `None`
             past_key_value = (key_layer, value_layer)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
-        # here torch.matmul is actually jittor...
-        attention_scores = self.mm1(query_layer, key_layer.transpose(-1, -2)) if self.use_fp16 \
-            else torch.matmul(query_layer, key_layer.transpose(-1, -2))
+        attention_scores = jt.matmul(query_layer, key_layer.transpose(-1, -2))
 
         if self.position_embedding_type == "relative_key" or self.position_embedding_type == "relative_key_query":
             seq_length = hidden_states.size()[1]
-            position_ids_l = torch.arange(seq_length, dtype=torch.long, device=hidden_states.device).view(-1, 1)
-            position_ids_r = torch.arange(seq_length, dtype=torch.long, device=hidden_states.device).view(1, -1)
+            position_ids_l = jt.arange(seq_length, dtype=jt.long, device=hidden_states.device).view(-1, 1)
+            position_ids_r = jt.arange(seq_length, dtype=jt.long, device=hidden_states.device).view(1, -1)
             distance = position_ids_l - position_ids_r
             positional_embedding = self.distance_embedding(distance + self.max_position_embeddings - 1)
             positional_embedding = positional_embedding.to(dtype=query_layer.dtype)  # fp16 compatibility
 
             if self.position_embedding_type == "relative_key":
-                relative_position_scores = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
+                relative_position_scores = jt.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
                 attention_scores = attention_scores + relative_position_scores
             elif self.position_embedding_type == "relative_key_query":
-                relative_position_scores_query = torch.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
-                relative_position_scores_key = torch.einsum("bhrd,lrd->bhlr", key_layer, positional_embedding)
+                relative_position_scores_query = jt.einsum("bhld,lrd->bhlr", query_layer, positional_embedding)
+                relative_position_scores_key = jt.einsum("bhrd,lrd->bhlr", key_layer, positional_embedding)
                 attention_scores = attention_scores + relative_position_scores_query + relative_position_scores_key
 
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
@@ -324,7 +316,7 @@ class BertSelfAttention(nn.Module):
             attention_scores = attention_scores + attention_mask
 
         # Normalize the attention scores to probabilities.
-        attention_probs = jt.nn.Softmax(dim=-1)(attention_scores)
+        attention_probs = nn.Softmax(dim=-1)(attention_scores)
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
@@ -334,17 +326,11 @@ class BertSelfAttention(nn.Module):
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
 
-        context_layer = self.mm2(attention_probs, value_layer) if self.use_fp16 \
-            else torch.matmul(attention_probs, value_layer)
+        context_layer = jt.matmul(attention_probs, value_layer)
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
-        
-        
-        if self.use_fp16:
-            context_layer = context_layer.float32()
-            attention_probs = attention_probs.float32()
 
         outputs = (context_layer, attention_probs) if output_attentions else (context_layer,)
 
@@ -358,8 +344,8 @@ class BertSelfOutput(nn.Module):
         super().__init__()
         
         # self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.use_fp16 = config.__dict__.get('use_fp16', False)
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size) if not self.use_fp16 else \
+        self.not_fp16 = not config.__dict__.get('use_fp16', False)
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size) if self.not_fp16 else \
                    FP16_Linear(config.hidden_size, config.hidden_size)
 
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
@@ -425,8 +411,8 @@ class BertIntermediate(nn.Module):
     def __init__(self, config):
         super().__init__()
         # self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
-        self.use_fp16 = config.__dict__.get('use_fp16', False)
-        self.dense = nn.Linear(config.hidden_size, config.intermediate_size) if not self.use_fp16 else \
+        self.not_fp16 = not config.__dict__.get('use_fp16', False)
+        self.dense = nn.Linear(config.hidden_size, config.intermediate_size) if self.not_fp16 else \
                    FP16_Linear(config.hidden_size, config.intermediate_size)
         
         if isinstance(config.hidden_act, str):
@@ -443,8 +429,8 @@ class BertIntermediate(nn.Module):
 class BertOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.use_fp16 = config.__dict__.get('use_fp16', False)
-        self.dense = nn.Linear(config.intermediate_size, config.hidden_size) if not self.use_fp16 else \
+        self.not_fp16 = not config.__dict__.get('use_fp16', False)
+        self.dense = nn.Linear(config.intermediate_size, config.hidden_size) if self.not_fp16 else \
                    FP16_Linear(config.intermediate_size, config.hidden_size)
 
         self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
@@ -470,8 +456,6 @@ class BertLayer(nn.Module):
             self.crossattention = BertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
-        
-        self.use_fp16 = config.__dict__.get('use_fp16', False)
 
     def forward(
         self,
@@ -537,15 +521,8 @@ class BertLayer(nn.Module):
         return outputs
 
     def feed_forward_chunk(self, attention_output):
-        if self.use_fp16:
-            attention_output = attention_output.float16()
-            
         intermediate_output = self.intermediate(attention_output)
         layer_output = self.output(intermediate_output, attention_output)
-        
-        if self.use_fp16:
-            layer_output = layer_output.float32()
-            
         return layer_output
 
 
@@ -587,7 +564,7 @@ class BertEncoder(nn.Module):
 
                     return custom_forward
 
-                layer_outputs = torch.utils.checkpoint.checkpoint(
+                layer_outputs = jt.utils.checkpoint.checkpoint(
                     create_custom_forward(layer_module),
                     hidden_states,
                     attention_mask,
@@ -641,8 +618,8 @@ class BertEncoder(nn.Module):
 class BertPooler(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.use_fp16 = config.__dict__.get('use_fp16', False)
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size) if not self.use_fp16 else \
+        self.not_fp16 = not config.__dict__.get('use_fp16', False)
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size) if self.not_fp16 else \
                    FP16_Linear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
 
@@ -658,8 +635,8 @@ class BertPooler(nn.Module):
 class BertPredictionHeadTransform(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.use_fp16 = config.__dict__.get('use_fp16', False)
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size) if not self.use_fp16 else \
+        self.not_fp16 = not config.__dict__.get('use_fp16', False)
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size) if self.not_fp16 else \
                    FP16_Linear(config.hidden_size, config.hidden_size)
         if isinstance(config.hidden_act, str):
             self.transform_act_fn = ACT2FN[config.hidden_act]
@@ -681,11 +658,11 @@ class BertLMPredictionHead(nn.Module):
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
-        self.use_fp16 = config.__dict__.get('use_fp16', False)
-        self.decoder = nn.Linear(config.hidden_size, config.vocab_size) if not self.use_fp16 else \
+        self.not_fp16 = not config.__dict__.get('use_fp16', False)
+        self.decoder = nn.Linear(config.hidden_size, config.vocab_size) if self.not_fp16 else \
                      FP16_Linear(config.hidden_size, config.vocab_size)
 
-        self.bias = nn.Parameter(torch.zeros(config.vocab_size))
+        self.bias = nn.Parameter(jt.zeros(config.vocab_size))
 
         # Need a link between the two variables so that the bias is correctly resized with `resize_token_embeddings`
         self.decoder.bias = self.bias
@@ -758,32 +735,32 @@ class BertForPreTrainingOutput(ModelOutput):
     Output type of :class:`~transformers.BertForPreTraining`.
 
     Args:
-        loss (`optional`, returned when ``labels`` is provided, ``torch.FloatTensor`` of shape :obj:`(1,)`):
+        loss (`optional`, returned when ``labels`` is provided, ``jt.FloatTensor`` of shape :obj:`(1,)`):
             Total loss as the sum of the masked language modeling loss and the next sequence prediction
             (classification) loss.
-        prediction_logits (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length, config.vocab_size)`):
+        prediction_logits (:obj:`jt.FloatTensor` of shape :obj:`(batch_size, sequence_length, config.vocab_size)`):
             Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
-        seq_relationship_logits (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, 2)`):
+        seq_relationship_logits (:obj:`jt.FloatTensor` of shape :obj:`(batch_size, 2)`):
             Prediction scores of the next sequence prediction (classification) head (scores of True/False continuation
             before SoftMax).
-        hidden_states (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for the output of the embeddings + one for the output of each layer)
+        hidden_states (:obj:`tuple(jt.FloatTensor)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
+            Tuple of :obj:`jt.FloatTensor` (one for the output of the embeddings + one for the output of each layer)
             of shape :obj:`(batch_size, sequence_length, hidden_size)`.
 
             Hidden-states of the model at the output of each layer plus the initial embedding outputs.
-        attentions (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for each layer) of shape :obj:`(batch_size, num_heads,
+        attentions (:obj:`tuple(jt.FloatTensor)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
+            Tuple of :obj:`jt.FloatTensor` (one for each layer) of shape :obj:`(batch_size, num_heads,
             sequence_length, sequence_length)`.
 
             Attentions weights after the attention softmax, used to compute the weighted average in the self-attention
             heads.
     """
 
-    loss: Optional[torch.FloatTensor] = None
-    prediction_logits: torch.FloatTensor = None
-    seq_relationship_logits: torch.FloatTensor = None
-    hidden_states: Optional[Tuple[torch.FloatTensor]] = None
-    attentions: Optional[Tuple[torch.FloatTensor]] = None
+    loss: Optional[jt.FloatTensor] = None
+    prediction_logits: jt.FloatTensor = None
+    seq_relationship_logits: jt.FloatTensor = None
+    hidden_states: Optional[Tuple[jt.FloatTensor]] = None
+    attentions: Optional[Tuple[jt.FloatTensor]] = None
 
 
 BERT_START_DOCSTRING = r"""
@@ -792,7 +769,7 @@ BERT_START_DOCSTRING = r"""
     methods the library implements for all its model (such as downloading or saving, resizing the input embeddings,
     pruning heads etc.)
 
-    This model is also a PyTorch `torch.nn.Module <https://pytorch.org/docs/stable/nn.html#torch.nn.Module>`__
+    This model is also a PyTorch `jt.nn.Module <https://pytorch.org/docs/stable/nn.html#jt.nn.Module>`__
     subclass. Use it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to
     general usage and behavior.
 
@@ -805,7 +782,7 @@ BERT_START_DOCSTRING = r"""
 
 BERT_INPUTS_DOCSTRING = r"""
     Args:
-        input_ids (:obj:`torch.LongTensor` of shape :obj:`({0})`):
+        input_ids (:obj:`jt.LongTensor` of shape :obj:`({0})`):
             Indices of input sequence tokens in the vocabulary.
 
             Indices can be obtained using :class:`~transformers.BertTokenizer`. See
@@ -813,14 +790,14 @@ BERT_INPUTS_DOCSTRING = r"""
             details.
 
             `What are input IDs? <../glossary.html#input-ids>`__
-        attention_mask (:obj:`torch.FloatTensor` of shape :obj:`({0})`, `optional`):
+        attention_mask (:obj:`jt.FloatTensor` of shape :obj:`({0})`, `optional`):
             Mask to avoid performing attention on padding token indices. Mask values selected in ``[0, 1]``:
 
             - 1 for tokens that are **not masked**,
             - 0 for tokens that are **masked**.
 
             `What are attention masks? <../glossary.html#attention-mask>`__
-        token_type_ids (:obj:`torch.LongTensor` of shape :obj:`({0})`, `optional`):
+        token_type_ids (:obj:`jt.LongTensor` of shape :obj:`({0})`, `optional`):
             Segment token indices to indicate first and second portions of the inputs. Indices are selected in ``[0,
             1]``:
 
@@ -828,18 +805,18 @@ BERT_INPUTS_DOCSTRING = r"""
             - 1 corresponds to a `sentence B` token.
 
             `What are token type IDs? <../glossary.html#token-type-ids>`_
-        position_ids (:obj:`torch.LongTensor` of shape :obj:`({0})`, `optional`):
+        position_ids (:obj:`jt.LongTensor` of shape :obj:`({0})`, `optional`):
             Indices of positions of each input sequence tokens in the position embeddings. Selected in the range ``[0,
             config.max_position_embeddings - 1]``.
 
             `What are position IDs? <../glossary.html#position-ids>`_
-        head_mask (:obj:`torch.FloatTensor` of shape :obj:`(num_heads,)` or :obj:`(num_layers, num_heads)`, `optional`):
+        head_mask (:obj:`jt.FloatTensor` of shape :obj:`(num_heads,)` or :obj:`(num_layers, num_heads)`, `optional`):
             Mask to nullify selected heads of the self-attention modules. Mask values selected in ``[0, 1]``:
 
             - 1 indicates the head is **not masked**,
             - 0 indicates the head is **masked**.
 
-        inputs_embeds (:obj:`torch.FloatTensor` of shape :obj:`({0}, hidden_size)`, `optional`):
+        inputs_embeds (:obj:`jt.FloatTensor` of shape :obj:`({0}, hidden_size)`, `optional`):
             Optionally, instead of passing :obj:`input_ids` you can choose to directly pass an embedded representation.
             This is useful if you want more control over how to convert :obj:`input_ids` indices into associated
             vectors than the model's internal embedding lookup matrix.
@@ -880,8 +857,6 @@ class BertModel(BertPreTrainedModel):
         self.encoder = BertEncoder(config)
 
         self.pooler = BertPooler(config) if add_pooling_layer else None
-        
-        self.use_fp16 = config.__dict__.get('use_fp16', False)
 
         self.init_weights()
 
@@ -923,16 +898,16 @@ class BertModel(BertPreTrainedModel):
         return_dict=None,
     ):
         r"""
-        encoder_hidden_states  (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length, hidden_size)`, `optional`):
+        encoder_hidden_states  (:obj:`jt.FloatTensor` of shape :obj:`(batch_size, sequence_length, hidden_size)`, `optional`):
             Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention if
             the model is configured as a decoder.
-        encoder_attention_mask (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
+        encoder_attention_mask (:obj:`jt.FloatTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Mask to avoid performing attention on the padding token indices of the encoder input. This mask is used in
             the cross-attention if the model is configured as a decoder. Mask values selected in ``[0, 1]``:
 
             - 1 for tokens that are **not masked**,
             - 0 for tokens that are **masked**.
-        past_key_values (:obj:`tuple(tuple(torch.FloatTensor))` of length :obj:`config.n_layers` with each tuple having 4 tensors of shape :obj:`(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
+        past_key_values (:obj:`tuple(tuple(jt.FloatTensor))` of length :obj:`config.n_layers` with each tuple having 4 tensors of shape :obj:`(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
             Contains precomputed key and value hidden states of the attention blocks. Can be used to speed up decoding.
 
             If :obj:`past_key_values` are used, the user can optionally input only the last :obj:`decoder_input_ids`
@@ -970,13 +945,13 @@ class BertModel(BertPreTrainedModel):
         past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
 
         if attention_mask is None:
-            attention_mask = torch.ones(((batch_size, seq_length + past_key_values_length)), device=device)
+            attention_mask = jt.ones(((batch_size, seq_length + past_key_values_length)), device=device)
         if token_type_ids is None:
-            token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+            token_type_ids = jt.zeros(input_shape, dtype=jt.long, device=device)
 
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
-        extended_attention_mask: torch.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device)
+        extended_attention_mask: jt.Tensor = self.get_extended_attention_mask(attention_mask, input_shape, device)
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
@@ -984,7 +959,7 @@ class BertModel(BertPreTrainedModel):
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
             encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=device)
+                encoder_attention_mask = jt.ones(encoder_hidden_shape, device=device)
             encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
         else:
             encoder_extended_attention_mask = None
@@ -1015,7 +990,6 @@ class BertModel(BertPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
-    
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
 
@@ -1071,11 +1045,11 @@ class BertForPreTraining(BertPreTrainedModel):
         return_dict=None,
     ):
         r"""
-        labels (:obj:`torch.LongTensor` of shape ``(batch_size, sequence_length)``, `optional`):
+        labels (:obj:`jt.LongTensor` of shape ``(batch_size, sequence_length)``, `optional`):
             Labels for computing the masked language modeling loss. Indices should be in ``[-100, 0, ...,
             config.vocab_size]`` (see ``input_ids`` docstring) Tokens with indices set to ``-100`` are ignored
             (masked), the loss is only computed for the tokens with labels in ``[0, ..., config.vocab_size]``
-        next_sentence_label (``torch.LongTensor`` of shape ``(batch_size,)``, `optional`):
+        next_sentence_label (``jt.LongTensor`` of shape ``(batch_size,)``, `optional`):
             Labels for computing the next sequence prediction (classification) loss. Input should be a sequence pair
             (see :obj:`input_ids` docstring) Indices should be in ``[0, 1]``:
 
@@ -1089,7 +1063,7 @@ class BertForPreTraining(BertPreTrainedModel):
         Example::
 
             >>> from transformers import BertTokenizer, BertForPreTraining
-            >>> import torch
+            >>> import jt
 
             >>> tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
             >>> model = BertForPreTraining.from_pretrained('bert-base-uncased')
@@ -1182,20 +1156,20 @@ class BertLMHeadModel(BertPreTrainedModel):
         return_dict=None,
     ):
         r"""
-        encoder_hidden_states  (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length, hidden_size)`, `optional`):
+        encoder_hidden_states  (:obj:`jt.FloatTensor` of shape :obj:`(batch_size, sequence_length, hidden_size)`, `optional`):
             Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention if
             the model is configured as a decoder.
-        encoder_attention_mask (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
+        encoder_attention_mask (:obj:`jt.FloatTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Mask to avoid performing attention on the padding token indices of the encoder input. This mask is used in
             the cross-attention if the model is configured as a decoder. Mask values selected in ``[0, 1]``:
 
             - 1 for tokens that are **not masked**,
             - 0 for tokens that are **masked**.
-        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
+        labels (:obj:`jt.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Labels for computing the left-to-right language modeling loss (next word prediction). Indices should be in
             ``[-100, 0, ..., config.vocab_size]`` (see ``input_ids`` docstring) Tokens with indices set to ``-100`` are
             ignored (masked), the loss is only computed for the tokens with labels n ``[0, ..., config.vocab_size]``
-        past_key_values (:obj:`tuple(tuple(torch.FloatTensor))` of length :obj:`config.n_layers` with each tuple having 4 tensors of shape :obj:`(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
+        past_key_values (:obj:`tuple(tuple(jt.FloatTensor))` of length :obj:`config.n_layers` with each tuple having 4 tensors of shape :obj:`(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
             Contains precomputed key and value hidden states of the attention blocks. Can be used to speed up decoding.
 
             If :obj:`past_key_values` are used, the user can optionally input only the last :obj:`decoder_input_ids`
@@ -1210,7 +1184,7 @@ class BertLMHeadModel(BertPreTrainedModel):
         Example::
 
             >>> from transformers import BertTokenizer, BertLMHeadModel, BertConfig
-            >>> import torch
+            >>> import jt
 
             >>> tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
             >>> config = BertConfig.from_pretrained("bert-base-cased")
@@ -1334,7 +1308,7 @@ class BertForMaskedLM(BertPreTrainedModel):
         return_dict=None,
     ):
         r"""
-        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
+        labels (:obj:`jt.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Labels for computing the masked language modeling loss. Indices should be in ``[-100, 0, ...,
             config.vocab_size]`` (see ``input_ids`` docstring) Tokens with indices set to ``-100`` are ignored
             (masked), the loss is only computed for the tokens with labels in ``[0, ..., config.vocab_size]``
@@ -1381,11 +1355,11 @@ class BertForMaskedLM(BertPreTrainedModel):
 
         #  add a dummy token
         assert self.config.pad_token_id is not None, "The PAD token should be defined for generation"
-        attention_mask = torch.cat([attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))], dim=-1)
-        dummy_token = torch.full(
-            (effective_batch_size, 1), self.config.pad_token_id, dtype=torch.long, device=input_ids.device
+        attention_mask = jt.cat([attention_mask, attention_mask.new_zeros((attention_mask.shape[0], 1))], dim=-1)
+        dummy_token = jt.full(
+            (effective_batch_size, 1), self.config.pad_token_id, dtype=jt.long, device=input_ids.device
         )
-        input_ids = torch.cat([input_ids, dummy_token], dim=1)
+        input_ids = jt.cat([input_ids, dummy_token], dim=1)
 
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
@@ -1420,7 +1394,7 @@ class BertForNextSentencePrediction(BertPreTrainedModel):
         **kwargs
     ):
         r"""
-        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+        labels (:obj:`jt.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
             Labels for computing the next sequence prediction (classification) loss. Input should be a sequence pair
             (see ``input_ids`` docstring). Indices should be in ``[0, 1]``:
 
@@ -1432,7 +1406,7 @@ class BertForNextSentencePrediction(BertPreTrainedModel):
         Example::
 
             >>> from transformers import BertTokenizer, BertForNextSentencePrediction
-            >>> import torch
+            >>> import jt
 
             >>> tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
             >>> model = BertForNextSentencePrediction.from_pretrained('bert-base-uncased')
@@ -1441,7 +1415,7 @@ class BertForNextSentencePrediction(BertPreTrainedModel):
             >>> next_sentence = "The sky is blue due to the shorter wavelength of blue light."
             >>> encoding = tokenizer(prompt, next_sentence, return_tensors='pt')
 
-            >>> outputs = model(**encoding, labels=torch.LongTensor([1]))
+            >>> outputs = model(**encoding, labels=jt.LongTensor([1]))
             >>> logits = outputs.logits
             >>> assert logits[0, 0] < logits[0, 1] # next sentence was random
         """
@@ -1527,7 +1501,7 @@ class BertForSequenceClassification(BertPreTrainedModel):
         return_dict=None,
     ):
         r"""
-        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+        labels (:obj:`jt.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
             Labels for computing the sequence classification/regression loss. Indices should be in :obj:`[0, ...,
             config.num_labels - 1]`. If :obj:`config.num_labels == 1` a regression loss is computed (Mean-Square loss),
             If :obj:`config.num_labels > 1` a classification loss is computed (Cross-Entropy).
@@ -1611,7 +1585,7 @@ class BertForMultipleChoice(BertPreTrainedModel):
         return_dict=None,
     ):
         r"""
-        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+        labels (:obj:`jt.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
             Labels for computing the multiple choice classification loss. Indices should be in ``[0, ...,
             num_choices-1]`` where :obj:`num_choices` is the size of the second dimension of the input tensors. (See
             :obj:`input_ids` above)
@@ -1706,7 +1680,7 @@ class BertForTokenClassification(BertPreTrainedModel):
         return_dict=None,
     ):
         r"""
-        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
+        labels (:obj:`jt.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Labels for computing the token classification loss. Indices should be in ``[0, ..., config.num_labels -
             1]``.
         """
@@ -1736,8 +1710,8 @@ class BertForTokenClassification(BertPreTrainedModel):
             if attention_mask is not None:
                 active_loss = attention_mask.view(-1) == 1
                 active_logits = logits.view(-1, self.num_labels)
-                active_labels = torch.where(
-                    active_loss, labels.view(-1), torch.tensor(loss_fct.ignore_index).type_as(labels)
+                active_labels = jt.where(
+                    active_loss, labels.view(-1), jt.tensor(loss_fct.ignore_index).type_as(labels)
                 )
                 loss = loss_fct(active_logits, active_labels)
             else:
@@ -1772,8 +1746,8 @@ class BertForQuestionAnswering(BertPreTrainedModel):
 
         self.bert = BertModel(config, add_pooling_layer=False)
         
-        self.use_fp16 = config.__dict__.get('use_fp16', False)
-        self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels) if not self.use_fp16 else \
+        self.not_fp16 = not config.__dict__.get('use_fp16', False)
+        self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels) if self.not_fp16 else \
                         FP16_Linear(config.hidden_size, config.num_labels)
 
         self.init_weights()
@@ -1800,11 +1774,11 @@ class BertForQuestionAnswering(BertPreTrainedModel):
         return_dict=None,
     ):
         r"""
-        start_positions (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+        start_positions (:obj:`jt.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
             Labels for position (index) of the start of the labelled span for computing the token classification loss.
             Positions are clamped to the length of the sequence (:obj:`sequence_length`). Position outside of the
             sequence are not taken into account for computing the loss.
-        end_positions (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+        end_positions (:obj:`jt.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
             Labels for position (index) of the end of the labelled span for computing the token classification loss.
             Positions are clamped to the length of the sequence (:obj:`sequence_length`). Position outside of the
             sequence are not taken into account for computing the loss.

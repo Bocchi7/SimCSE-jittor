@@ -12,6 +12,7 @@ import random
 
 from datasets import load_dataset
 from jt_dataset import TrainDataset
+import jittor as jt
 
 import transformers
 from transformers import (
@@ -282,6 +283,7 @@ def main():
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
         + f" distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
+    
     # Set the verbosity to info of the Transformers logger (on main process only):
     if is_main_process(training_args.local_rank):
         transformers.utils.logging.set_verbosity_info()
@@ -333,6 +335,19 @@ def main():
         config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
 
+    # [NOTE] We set `use fp16` into model configs!
+    if training_args.fp16:
+        print("Using FP16 !!!")
+        """
+        Jittor cannot support Autocast like AMP.
+            And, if we set `flags.amp_reg`, Jittor will set all kinds of operations into FP16, 
+            resulting instability in training()
+        
+        So, to exploit the efficiency of FP16, we decided to only replace FP32-layers like Attn&Linear
+            with Faster Mix-Precision-FP16-layers implemented by ourselves
+        """
+    config.use_fp16 = training_args.fp16
+    
     tokenizer_kwargs = {
         "cache_dir": model_args.cache_dir,
         "use_fast": model_args.use_fast_tokenizer,

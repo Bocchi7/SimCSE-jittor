@@ -21,6 +21,7 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
+import jittor as jt
 import torch
 from torch import Tensor, device, dtype, nn
 from torch.nn import CrossEntropyLoss
@@ -714,7 +715,7 @@ class PreTrainedModel(nn.Module, ModuleUtilsMixin, GenerationMixin):
         if old_num_tokens == new_num_tokens:
             return old_lm_head
 
-        if not isinstance(old_lm_head, nn.Linear):
+        if not isinstance(old_lm_head, (nn.Linear, jt.nn.Linear)):
             raise TypeError(
                 f"Old language model head is of type {type(old_lm_head)}, which is not an instance of {nn.Linear}."
                 f"You should either use a different resize function or make sure that `old_embeddings` are an instance of {nn.Linear}."
@@ -1714,7 +1715,7 @@ def prune_layer(
         :obj:`torch.nn.Linear` or :class:`~transformers.modeling_utils.Conv1D`: The pruned layer as a new layer with
         :obj:`requires_grad=True`.
     """
-    if isinstance(layer, nn.Linear):
+    if isinstance(layer, (nn.Linear, jt.nn.Linear)):
         return prune_linear_layer(layer, index, dim=0 if dim is None else dim)
     elif isinstance(layer, Conv1D):
         return prune_conv1d_layer(layer, index, dim=1 if dim is None else dim)

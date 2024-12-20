@@ -27,6 +27,7 @@ import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
+import jittor as jt
 
 # Integrations must be imported before ML frameworks:
 from .integrations import (  # isort: split
@@ -361,17 +362,25 @@ class Trainer:
         self.use_amp = False
         self.fp16_backend = None
 
+        self.use_jittor_fp16 = False
         if args.fp16:
             if args.fp16_backend == "auto":
-                self.fp16_backend = "amp" if _is_native_amp_available else "apex"
+                # self.fp16_backend = "amp" if _is_native_amp_available else "apex"
+                self.use_jittor_fp16 = True
+                # self.jittor_fp16_initialized = False
+                self.fp16_backend = "jittor"
             else:
                 self.fp16_backend = args.fp16_backend
+                self.use_jittor_fp16 = False
             logger.info(f"Using {self.fp16_backend} fp16 backend")
 
         if args.fp16 and not args.deepspeed:  # deepspeed manages its own fp16
             if self.fp16_backend == "amp":
                 self.use_amp = True
                 self.scaler = ShardedGradScaler() if self.sharded_dpp else torch.cuda.amp.GradScaler()
+            elif self.fp16_backend == "jittor":
+                pass
+                
             else:
                 if not is_apex_available():
                     raise ImportError(
@@ -1256,13 +1265,14 @@ class Trainer:
         Return:
             :obj:`torch.Tensor`: The tensor with training loss on this batch.
         """
-
         model.train()
         inputs = self._prepare_inputs(inputs)
 
         if self.use_amp:
             with autocast():
                 loss = self.compute_loss(model, inputs)
+        elif self.use_jittor_fp16:
+            loss = self.compute_loss(model, inputs)
         else:
             loss = self.compute_loss(model, inputs)
 

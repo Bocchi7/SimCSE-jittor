@@ -5,9 +5,9 @@
 # about how to use PyTorch's distributed data parallel.
 
 python train.py \
-    --model_name_or_path ../gpt2  \
+    --model_name_or_path ../gpt2-medium  \
     --train_file data/wiki1m_for_simcse.txt \
-    --output_dir result/torch-unsup-simcse-gpt2 \
+    --output_dir result/jittorFP16-unsup-simcse-gpt2-medium-avg \
     --num_train_epochs 1 \
     --per_device_train_batch_size 64 \
     --learning_rate 3e-5 \
@@ -15,13 +15,13 @@ python train.py \
     --evaluation_strategy steps \
     --metric_for_best_model stsb_spearman \
     --load_best_model_at_end \
-    --eval_steps 1 \
-    --pooler_type w_avg \
+    --eval_steps 125 \
+    --pooler_type avg \
     --mlp_only_train \
     --overwrite_output_dir \
     --temp 0.05 \
     --preprocessing_num_workers 32 \
     --do_train \
     --do_eval \
+    --fp16 \
     "$@"
-    # --fp16 \

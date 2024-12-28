@@ -5,9 +5,9 @@
 # about how to use PyTorch's distributed data parallel.
 
 python evaluation.py \
-    --model_name_or_path result/jittorFP32-unsup-simcse-bert-base-uncased \
+    --model_name_or_path result/jittorFP16-unsup-simcse-bert-base-uncased \
     --pooler cls \
     --task_set sts \
     --mode test
-    "$@"
-    # --fp16 \
+    # --fp16
+    # "$@"

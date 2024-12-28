@@ -5,10 +5,9 @@
 # about how to use PyTorch's distributed data parallel.
 
 python evaluation.py \
-    --model_name_or_path result/jittorFP16-unsup-simcse-gpt2-medium \
+    --model_name_or_path result/JittorFP16-unsup-simcse-pawsx \
     --pooler avg \
-    --task_set sts \
-    --is_decoder \
+    --task_set chn \
     --mode test
     "$@"
     # --fp16 \

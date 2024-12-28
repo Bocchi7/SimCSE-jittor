@@ -30,7 +30,7 @@ def main():
     parser.add_argument("--model_name_or_path", type=str, 
             help="Transformers' model name or path")
     parser.add_argument("--pooler", type=str, 
-            choices=['cls', 'cls_before_pooler', 'avg', 'avg_top2', 'avg_first_last', 'w_avg'], 
+            choices=['cls', 'cls_before_pooler', 'avg', 'avg_top2', 'avg_first_last', 'w_avg', 'avg_head', 'w_avg_head'], 
             default='cls', 
             help="Which pooler to use")
     parser.add_argument("--mode", type=str, 
@@ -38,15 +38,16 @@ def main():
             default='test', 
             help="What evaluation mode to use (dev: fast mode, dev results; test: full mode, test results); fasttest: fast mode, test results")
     parser.add_argument("--task_set", type=str, 
-            choices=['sts', 'transfer', 'full', 'na'],
+            choices=['sts', 'chn', 'transfer', 'full', 'na'],
             default='sts',
             help="What set of tasks to evaluate on. If not 'na', this will override '--tasks'")
     parser.add_argument("--tasks", type=str, nargs='+', 
             default=['STS12', 'STS13', 'STS14', 'STS15', 'STS16',
                      'MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC', 'MRPC',
-                     'SICKRelatedness', 'STSBenchmark'], 
+                     'SICKRelatedness', 'STSBenchmark',
+                     'LCQMC', 'PAWSX'], 
             help="Tasks to evaluate on. If '--task_set' is specified, this will be overridden")
-    parser.add_argument("--is_encoder", type=bool, default=True)
+    parser.add_argument("--is_decoder", action="store_true") # 这东西只能默认False传入True，不能反之
     
     args = parser.parse_args()
     
@@ -59,6 +60,8 @@ def main():
     # Set up the tasks
     if args.task_set == 'sts':
         args.tasks = ['STS12', 'STS13', 'STS14', 'STS15', 'STS16', 'STSBenchmark', 'SICKRelatedness']
+    elif args.task_set == 'chn':
+        args.tasks = ['LCQMC', 'PAWSX']
     elif args.task_set == 'transfer':
         args.tasks = ['MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC', 'MRPC']
     elif args.task_set == 'full':
@@ -114,7 +117,7 @@ def main():
         with torch.no_grad():
             outputs = model(**batch, output_hidden_states=True, return_dict=True)
             
-        if args.is_encoder:
+        if not args.is_decoder:
             last_hidden = outputs.last_hidden_state
             pooler_output = outputs.pooler_output
             hidden_states = outputs.hidden_states
@@ -141,7 +144,10 @@ def main():
                 raise NotImplementedError
         else:
             last_hidden = outputs.last_hidden_state
-            if args.pooler == "avg":
+            pooler_output = outputs.pooler_output
+            if "head" in args.pooler:
+                return pooler_output.cpu()
+            elif args.pooler == "avg":
                 return ((last_hidden * batch['attention_mask'].unsqueeze(-1)).sum(1) / batch['attention_mask'].sum(-1).unsqueeze(-1)).cpu()
             elif args.pooler == "w_avg":
                 idx = batch['attention_mask'].cumsum(dim=1)
@@ -194,6 +200,18 @@ def main():
                     scores.append("%.2f" % (results[task]['all']['spearman']['all'] * 100))
                 else:
                     scores.append("%.2f" % (results[task]['test']['spearman'].correlation * 100))
+            else:
+                scores.append("0.00")
+        task_names.append("Avg.")
+        scores.append("%.2f" % (sum([float(score) for score in scores]) / len(scores)))
+        print_table(task_names, scores)
+        
+        task_names = []
+        scores = []
+        for task in ['LCQMC', 'PAWSX']:
+            task_names.append(task)
+            if task in results:
+                scores.append("%.2f" % (results[task]['test']['spearman'][0] * 100))    
             else:
                 scores.append("0.00")
         task_names.append("Avg.")

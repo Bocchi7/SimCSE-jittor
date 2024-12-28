@@ -125,6 +125,12 @@ class ModelArguments:
             "help": "Use MLP only during training"
         }
     )
+    dropout_rate: float = field(
+        default=None,
+        metadata={
+            "help": "Dropout rate during training"
+        }
+    )
 
 
 @dataclass
@@ -184,7 +190,7 @@ class DataTrainingArguments:
         else:
             if self.train_file is not None:
                 extension = self.train_file.split(".")[-1]
-                assert extension in ["csv", "json", "txt"], "`train_file` should be a csv, a json or a txt file."
+                assert extension in ["csv", "json", "txt", "data"], "`train_file` should be a csv, a json or a txt file."
 
 
 @dataclass
@@ -196,6 +202,11 @@ class OurTrainingArguments(TrainingArguments):
     eval_transfer: bool = field(
         default=False,
         metadata={"help": "Evaluate transfer task dev sets (in validation)."}
+    )
+    
+    eval_chinese: bool = field(
+        default=False,
+        metadata={"help": "Evaluate chinese task dev sets (in validation)."}
     )
 
     @cached_property
@@ -309,8 +320,10 @@ def main():
     extension = data_args.train_file.split(".")[-1]
     if extension == "txt":
         extension = "text"
-    if extension == "csv":
-        datasets = load_dataset(extension, data_files=data_files, cache_dir="./data/", delimiter="\t" if "tsv" in data_args.train_file else ",")
+    if extension == 'data':
+        datasets = load_dataset('csv', data_files=data_files, cache_dir="./data/", delimiter='\t', header=None, column_names=['text'], usecols=[0])
+    elif extension == "csv":
+        datasets = load_dataset('csv', data_files=data_files, cache_dir="./data/", delimiter="\t" if "tsv" in data_args.train_file else ",")
     else:
         datasets = load_dataset(extension, data_files=data_files, cache_dir="./data/")
 
@@ -334,6 +347,12 @@ def main():
     else:
         config = CONFIG_MAPPING[model_args.model_type]()
         logger.warning("You are instantiating a new config instance from scratch.")
+        
+    # [NOTE] we set `dropout_rate` into model configs!
+    if model_args.dropout_rate:
+        for k in config.__dict__.keys():
+            if "dropout_prob" in k or "pdrop" in k:
+                setattr(config, k, model_args.dropout_rate)
 
     # [NOTE] We set `use fp16` into model configs!
     if training_args.fp16:

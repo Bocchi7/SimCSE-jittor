@@ -70,6 +70,8 @@ class Pooler(nn.Module):
     For decoder-based model:
     'avg': average of the last layers' hidden states at each token.
     'w_avg': weighted average of the last layers' hidden states at each token.
+    'avg_head': average of the last layers' hidden states at each token with MLP head.
+    'w_avg_head': weighted average of the last layers' hidden states at each token with MLP head.
     (TODO)
     """
     def __init__(self, pooler_type, is_encoder=True):
@@ -79,7 +81,7 @@ class Pooler(nn.Module):
         if is_encoder:
             assert self.pooler_type in ["cls", "cls_before_pooler", "avg", "avg_top2", "avg_first_last"], "unrecognized pooling type %s" % self.pooler_type
         else:
-            assert self.pooler_type in ["avg", "w_avg"], "unrecognized pooling type %s" % self.pooler_type
+            assert self.pooler_type in ["avg", "w_avg", "avg_head", "w_avg_head"], "unrecognized pooling type %s" % self.pooler_type
 
     def forward(self, attention_mask, outputs):
         if self.is_encoder:
@@ -105,9 +107,9 @@ class Pooler(nn.Module):
                 raise NotImplementedError
         else:
             last_hidden = outputs.last_hidden_state
-            if self.pooler_type == "avg":
+            if self.pooler_type == "avg" or self.pooler_type == "avg_head":
                 return ((last_hidden * attention_mask.unsqueeze(-1)).sum(1) / attention_mask.sum(-1).unsqueeze(-1))
-            elif self.pooler_type == "w_avg":
+            elif self.pooler_type == "w_avg" or self.pooler_type == "w_avg_head":
                 idx = attention_mask.cumsum(dim=1)
                 return ((last_hidden * idx.unsqueeze(-1)).sum(1) / idx.sum(-1).unsqueeze(-1))
             else:
@@ -120,10 +122,12 @@ def cl_init(cls, config, is_encoder = True):
     """
     cls.pooler_type = cls.model_args.pooler_type
     cls.pooler = Pooler(cls.model_args.pooler_type, is_encoder=is_encoder)
-    if cls.model_args.pooler_type == "cls":
+    if cls.model_args.pooler_type == "cls" or "head" in cls.model_args.pooler_type:
         cls.mlp = MLPLayer(config)
     cls.sim = Similarity(temp=cls.model_args.temp)
     cls.init_weights()
+    if "head" in cls.model_args.pooler_type:
+        torch.init.xavier_gauss_(cls.mlp.dense.weight)
 
 def cl_forward(cls,
     encoder,
@@ -188,7 +192,7 @@ def cl_forward(cls,
 
     # If using "cls", we add an extra MLP layer
     # (same as BERT's original implementation) over the representation.
-    if cls.pooler_type == "cls":
+    if cls.pooler_type == "cls" or "head" in cls.pooler_type:
         pooler_output = cls.mlp(pooler_output)
 
     # Separate representation
@@ -296,7 +300,7 @@ def sentemb_forward(
     )
 
     pooler_output = cls.pooler(attention_mask, outputs)
-    if cls.pooler_type == "cls" and not cls.model_args.mlp_only_train:
+    if (cls.pooler_type == "cls" or "head" in cls.pooler_type) and not cls.model_args.mlp_only_train:
         pooler_output = cls.mlp(pooler_output)
 
     if not return_dict:

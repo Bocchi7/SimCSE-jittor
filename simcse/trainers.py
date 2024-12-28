@@ -125,20 +125,27 @@ class CLTrainer(Trainer):
         tasks = ['STSBenchmark', 'SICKRelatedness']
         if eval_senteval_transfer or self.args.eval_transfer:
             tasks = ['STSBenchmark', 'SICKRelatedness', 'MR', 'CR', 'SUBJ', 'MPQA', 'SST2', 'TREC', 'MRPC']
+        if self.args.eval_chinese:
+            tasks = ['LCQMC', 'PAWSX']
         self.model.eval()
         results = se.eval(tasks)
         
-        stsb_spearman = results['STSBenchmark']['dev']['spearman'][0]
-        sickr_spearman = results['SICKRelatedness']['dev']['spearman'][0]
+        if self.args.eval_chinese:
+            lcqmc_spearman = results['LCQMC']['valid']['spearman'][0]
+            pawsx_spearman = results['PAWSX']['valid']['spearman'][0]
+            metrics = {"eval_lcqmc_spearman": lcqmc_spearman, "eval_pawsx_spearman": pawsx_spearman, "eval_avg_chn": (lcqmc_spearman + pawsx_spearman) / 2}
+        else:
+            stsb_spearman = results['STSBenchmark']['dev']['spearman'][0]
+            sickr_spearman = results['SICKRelatedness']['dev']['spearman'][0]
 
-        metrics = {"eval_stsb_spearman": stsb_spearman, "eval_sickr_spearman": sickr_spearman, "eval_avg_sts": (stsb_spearman + sickr_spearman) / 2} 
-        if eval_senteval_transfer or self.args.eval_transfer:
-            avg_transfer = 0
-            for task in ['MR', 'CR', 'SUBJ', 'MPQA', 'SST2', 'TREC', 'MRPC']:
-                avg_transfer += results[task]['devacc']
-                metrics['eval_{}'.format(task)] = results[task]['devacc']
-            avg_transfer /= 7
-            metrics['eval_avg_transfer'] = avg_transfer
+            metrics = {"eval_stsb_spearman": stsb_spearman, "eval_sickr_spearman": sickr_spearman, "eval_avg_sts": (stsb_spearman + sickr_spearman) / 2} 
+            if eval_senteval_transfer or self.args.eval_transfer:
+                avg_transfer = 0
+                for task in ['MR', 'CR', 'SUBJ', 'MPQA', 'SST2', 'TREC', 'MRPC']:
+                    avg_transfer += results[task]['devacc']
+                    metrics['eval_{}'.format(task)] = results[task]['devacc']
+                avg_transfer /= 7
+                metrics['eval_avg_transfer'] = avg_transfer
 
         self.log(metrics)
         return metrics

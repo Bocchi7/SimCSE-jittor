@@ -5,8 +5,8 @@
 # about how to use PyTorch's distributed data parallel.
 
 python evaluation.py \
-    --model_name_or_path result/JittorFP16-unsup-simcse-lcqmc \
-    --pooler avg \
+    --model_name_or_path result/JittorFP16-unsup-simcse-lcqmc-cls \
+    --pooler cls \
     --task_set chn \
     --mode test
     "$@"

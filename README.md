@@ -110,7 +110,7 @@ bash download_wiki.sh
 >
 > 预训练模型权重下载：如果能够访问 huggingface 可以直接运行脚本，脚本会自动下载；如果不能访问 huggingface，可以通过 https://hf-mirror.com 完成预训练权重下载。
 >
-> 预训练模型权重转换：如果训练脚本在读取权重过程遇到问题，你需要在标准的 PyTorch 环境下使用本仓库的 `transform.py` 进行预训练权重的格式转换。
+> 预训练模型权重转换：如果训练脚本在读取权重过程遇到问题，你需要在标准的 PyTorch 环境下使用本仓库的 `transform.py` 进行预训练权重的格式转换。具体用法见 `transform.py` 文件内注释。
 
 我们提供了一系列示例训练脚本，例如，`run_unsup_example-FP16.sh`中采用了和官方仓库一样的超参，`run_unsup_example-FP32.sh`是前者将`--fp16`设置去掉的超参。下面给出的各结果都是在这些示例训练脚本下得到的。
 
@@ -149,6 +149,13 @@ bash download_wiki.sh
 |--------|---------------|------------|---------------|------------|
 | LCQMC  | 31.81         | 63.55      | 52.54         | 61.75      |
 | PAWSX  | 9.87          | 12.37      | 9.39          | 8.66       |
+
+**注意**：在中文任务上进行训练和评估前，请确保已经下载中文 Senteval 数据集。
+
+```bash
+cd SentEval/data/downstream/
+bash download_dataset.sh
+```
 
 ### 从 BERT 迁移到 GPT-2 模型
 

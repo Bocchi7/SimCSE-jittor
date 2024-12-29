@@ -29,8 +29,6 @@ $$
 
 注：您可以直接按照下面的说明安装，也可以直接从 [环境和模型权重下载链接](https://cloud.tsinghua.edu.cn/d/a68eb5be2b824fbfb901/) 下载我们配置的 jittor conda 环境。
 
-注：您可以直接按照下面的说明安装，也可以直接从 [环境和模型权重下载链接](https://cloud.tsinghua.edu.cn/d/a68eb5be2b824fbfb901/) 下载我们配置的 jittor conda 环境。
-
 ### 系统环境
 
 - **操作系统**: Ubuntu 20.04.6 LTS x86_64
@@ -108,15 +106,9 @@ bash download_wiki.sh
 
 ## 示例训练脚本
 
-> 数据集下载：根据 [Evaluation](###Evaluation) 和 [Training](###Training) 小节中的说明下载数据集。
->
-> 预训练模型权重下载：如果能够访问 huggingface 可以直接运行脚本，脚本会自动下载；如果不能访问 huggingface，可以通过 https://hf-mirror.com 完成预训练权重下载。
->
-> 预训练模型权重转换：如果训练脚本在读取权重过程遇到问题，你需要在标准的 PyTorch 环境下使用本仓库的 `transform.py` 进行预训练权重的格式转换。具体用法见 `transform.py` 文件内注释。
-
 > 数据集下载：根据 [Evaluation](#evaluation) 和 [Training](#training) 小节中的说明下载数据集。
 >
-> 预训练模型权重下载：如果能够访问 huggingface 可以直接运行脚本，脚本会自动下载；如果不能访问 huggingface，可以通过 https://hf-mirror.com 完成预训练权重下载。
+> 预训练模型权重下载：如果能够访问 huggingface 可以直接运行脚本，脚本会自动下载；如果不能访问 huggingface，可以通过 https://hf-mirror.com 完成预训练权重下载。具体用法见 `transform.py` 文件内注释。
 >
 > 预训练模型权重转换：如果训练脚本在读取权重过程遇到问题，你需要在标准的 PyTorch 环境下使用本仓库的 `transform.py` 进行预训练权重的格式转换。
 

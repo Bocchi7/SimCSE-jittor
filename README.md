@@ -106,7 +106,7 @@ bash download_wiki.sh
 
 ## 示例训练脚本
 
-> 数据集下载：根据 [Evaluation](###Evaluation) 和 [Training](###Training) 小节中的说明下载数据集。
+> 数据集下载：根据 [Evaluation](#evaluation) 和 [Training](#training) 小节中的说明下载数据集。
 >
 > 预训练模型权重下载：如果能够访问 huggingface 可以直接运行脚本，脚本会自动下载；如果不能访问 huggingface，可以通过 https://hf-mirror.com 完成预训练权重下载。
 >

@@ -6,8 +6,8 @@
 
 python train.py \
     --model_name_or_path ../bert-base-chinese \
-    --train_file SentEval/data/downstream/senteval_cn/PAWSX/PAWSX.train.data \
-    --output_dir result/JittorFP16-unsup-simcse-pawsx \
+    --train_file SentEval/data/downstream/senteval_cn/LCQMC/LCQMC.train.data \
+    --output_dir result/JittorFP16-unsup-simcse-lcqmc-avg \
     --num_train_epochs 1 \
     --per_device_train_batch_size 64 \
     --learning_rate 3e-5 \
@@ -15,9 +15,9 @@ python train.py \
     --dropout_rate 0.1 \
     --evaluation_strategy steps \
     --eval_chinese \
-    --metric_for_best_model pawsx_spearman \
+    --metric_for_best_model lcqmc_spearman \
     --load_best_model_at_end \
-    --eval_steps 125 \
+    --eval_steps 5 \
     --pooler_type avg \
     --mlp_only_train \
     --overwrite_output_dir \

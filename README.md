@@ -1,3 +1,165 @@
+# SimCSE的Jittor复现
+
+## 简介
+
+在自然语言处理中，文本表示是重要的研究主题，好的文本表示需要能编码文本内在的语义特征。在本项目中，我们聚焦于句子粒度的表示，并将文本相似度（Semantic Textual Similarity, STS）任务设置为目标任务。
+
+SimCSE 是基于 BERT 模型微调，使用对比学习的损失函数训练得到的句子嵌入模型。论文中提出的无监督方法中，正样本通过对同一个句子进行两次带 dropout 的前向传播来生成，负样本采用的是同批次中的其它句子。我们在 Jittor 上复现了 SimCSE 模型的**无监督训练版本**，并完成了以下工作：
+
+1. **用 PyTorch 和 Jittor 分别完成原论文方法的复现**。
+2. **优化了 Jittor 的训练性能和显存占用**。
+3. **迁移到中文数据集进行实验**。
+4. **从 BERT (Encoder-Only) 迁移到 GPT-2 (Decoder-Only) 进行实验**。
+
+## 复现方法和额外工作
+
+### Jittor 复现方法和训练效率改进
+
+我们通过使用 jtorch 库、修改 transformers 库、适配 Jittor 的数据集格式，完成了 PyTorch 到 Jittor 框架的迁移。原论文仓库默认采用 CUDA AMP 的 FP16 混合精度框架训练。但由于 Jittor 框架缺乏对 CUDA AMP 混合精度框架的原生支持，我们手动实现了 FP16 混合精度线性层的 Forward 与 Backward 计算过程。
+
+### SimCSE 方法在 GPT2 上的迁移
+
+我们尝试将 SimCSE 中采用的 BERT 架构换成 GPT 架构。我们采用了 GPT2。我们支持平均池化方法和加权池化方法，其中加权池化方法公式如下：
+$$
+v = \sum_{i=1}^S w_ih_i, \quad {\rm where} \quad w_i = \frac{i}{\sum_{j=1}^S j},
+$$
+其中$S$为序列长度，$h_i$为各标记的最后隐藏层上的向量，$w_i$为加权池化时所采用的权重，$v$为池化结果。各标记享有的权重和它们所在的位置成正比，保证了能看到越多标记的标记享有越高的权重。我们实现了这种加权池化方法。
+
+## 配置环境教程
+
+### 系统环境
+
+- **操作系统**: Ubuntu 20.04.6 LTS x86_64
+- **GPU**: RTX3090 * 1
+- **GCC 版本**: gcc version 9.4.0
+
+### Jittor 安装
+
+注意：下面的 `python -m` 尽量不要省略，这样能保证安装到的是当前的 python 环境（即安装到当前的 conda env，而不是其他地方）。
+
+```bash
+conda create --name SimCSE python=3.7
+conda activate SimCSE
+sudo apt install libomp-dev
+
+python -m pip install jittor
+python -m jittor.test.test_example
+```
+
+### SimCSE 环境安装
+
+```bash
+# -i 指定用jittor的源， -I 强制重装Jittor版torch
+python -m pip install -r requirements.txt -i https://pypi.jittor.org/simple -I
+```
+
+**说明：**
+
+1. 理论上，安装 `jtorch` 环境之后，Jittor 就可以无伤兼容 torch 的 API：
+
+   ```bash
+   python -c "import torch; print(torch.tensor([1, 2, 3]))"
+   ```
+
+   你应当看到输出为 `jt.Var([1 2 3], dtype=int32)`（输出前面可能会跟着一些绿色的信息）
+
+2. 在 `SimCSE-jittor` 目录下测试 transformers 库（我们修改了 transfomers 库，删去了 Jittor 不能直接支持的模型）
+
+   ```bash
+   python -c "import torch; import transformers"
+   ```
+
+   **不应该**输出类似 `None of PyTorch, TensorFlow >= 2.0, or Flax have been found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.` 的报错信息
+
+   如果出现 `tokenizers` 的报错信息，请重新安装
+
+   ```
+   pip uninstall tokenizers
+   pip install tokenizers
+   ```
+
+
+<!-- # SimCSE Unsup. 复现
+
+data准备（微调数据集大小~71M）
+
+```
+cd data
+bash download_wiki.sh
+```
+
+加载预训练模型
+
+1. 下载 `export HF_ENDPOINT=https://hf-mirror.com`
+
+   ``
+
+2. 由于 Jittor 的 load 不支持当前的检查点，需要转换一下 `pytorch_model.bin`
+   可以用一个标准的 torch 来重新储存 state_dict（注意不是 Jittor 版本）；也可以使用我们转换好的来完成（链接
+
+遇到问题
+
+- pretrained weight 读取
+- 数据集处理（dataloader） -->
+
+## 示例训练脚本
+
+我们提供了一系列示例训练脚本，例如，`run_unsup_example-FP16.sh`中采用了和官方仓库一样的超参，`run_unsup_example-FP32.sh`是前者将`--fp16`设置去掉的超参。下面给出的各结果都是在这些示例训练脚本下得到的。
+
+我们也有提供评估脚本，如`run_unsup_example_eval.sh`。但这里我们并没有让它们和各示例训练脚本一一对应，所以请记得改`--model_name_or_path`和`--pooler_type`。
+
+## 实验结果示例
+
+### 训练结果复现与效率对比
+
+训练集、验证集、测试集的选取是和原论文一致的。训练集采用的是官方仓库给出的数据集，验证集选用 STS-B 验证集，测试集选用一系列 STS 任务的测试集。
+
+
+|                | STS-B 验证集 | 训练吞吐率 (it/s) | 显存占用 (GB) |
+|----------------|--------------|-------------------|---------------|
+| 论文结果       | 82.5         | -                 | -             |
+| Jittor-FP32    | 81.7         | 6.62              | 6.16          |
+| Jittor-OurFP16 | 83.5         | 8.76              | 4.04          |
+
+下表是我们将训练好的不同模型进一步在 STS 任务上进行测试的结果。可以看出 Jittor 与 PyTorch 的结果基本接近，并且也基本达到了原论文的水平。
+
+|                | STS12 | STS13 | STS14 | STS15 | STS16 | STS-B | STS-R | Avg.(test) |
+|----------------|-------|-------|-------|-------|-------|-------|-------|------------|
+| 论文结果       | 68.40 | 82.41 | 74.38 | 80.91 | 78.56 | 76.85 | 72.23 | 76.25      |
+| Jittor-FP32    | 69.34 | 82.07 | 73.54 | 81.57 | 78.47 | 77.68 | 70.01 | 76.10      |
+| Jittor-OurFP16 | 67.35 | 80.03 | 73.22 | 82.47 | 77.83 | 77.16 | 70.39 | 75.49      |
+
+### 到中文数据集的迁移
+
+我们在中文语义相似度任务 LCQMC 与 PAWSX 上进行了 SimCSE 模型的训练和评估，来验证其在中文任务上的有效性。
+
+从下表结果可以看出，使用 SimCSE 方法微调中文预训练模型，相比于微调前，仍然能够有效提升模型在文本嵌入任务上的表现。
+
+| 任务   | BERT-base-cls | SimCSE-cls | BERT-base-avg | SimCSE-avg |
+|--------|---------------|------------|---------------|------------|
+| LCQMC  | 31.81         | 63.55      | 52.54         | 61.75      |
+| PAWSX  | 9.87          | 12.37      | 9.39          | 8.66       |
+
+### 从 BERT 迁移到 GPT-2 模型
+
+我们将 SimCSE 模型迁移到 GPT 架构上，并分别测试了使用平均池化和加权平均池化的结果。
+
+从下表结果可以看出，GPT-2 尽管是 Decoder 架构，但仍然可以通过微调，在该任务上取得较好的结果；并且，使用加权平均进行池化，也显著地优于直接平均池化。
+
+|                | STS-B 验证集 | 各 STS 任务测试集均值 |
+|----------------|--------------|-----------------------|
+| SimCSE 复现结果 | 83.5         | 75.49                 |
+| gpt2-small-avg  | 64.5         | 54.17                 |
+| gpt2-small-wavg | 76.2         | 65.87                 |
+| gpt2-medium-avg | 65.2         | 49.47                 |
+| gpt2-medium-wavg | 79.3         | 68.18                 |
+
+---
+
+以下是[官方仓库](https://github.com/princeton-nlp/SimCSE)原本的README内容。
+
+---
+
 ## SimCSE: Simple Contrastive Learning of Sentence Embeddings
 
 This repository contains the code and pre-trained models for our paper [SimCSE: Simple Contrastive Learning of Sentence Embeddings](https://arxiv.org/abs/2104.08821).
